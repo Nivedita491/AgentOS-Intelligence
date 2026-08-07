@@ -2,12 +2,14 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { PencilRuler, FileText, Tag, Gauge, X, ChevronRight } from 'lucide-react';
 import { fetchDrawings, fetchAssets, uploadDrawing } from '@/lib/api';
 import type { EngineeringDrawing, Asset } from '@/types';
-import { PageHeader, Card, ErrorState, EmptyState } from '@/components/ui-primitives';
+import { PageHeader, Card, EmptyState } from '@/components/ui-primitives';
 import { StatusBadge } from '@/components/StatusBadge';
 import { formatDateTime, cn } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
+import { ErrorCard } from '@/components/ErrorCard';
+import { toFriendlyError, type FriendlyError } from '@/shared/validation';
 
 interface UploadItem {
   file: File;
@@ -20,7 +22,7 @@ export function Drawings() {
   const [drawings, setDrawings] = useState<EngineeringDrawing[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FriendlyError | null>(null);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [linkedAsset, setLinkedAsset] = useState<string>('none');
@@ -35,7 +37,7 @@ export function Drawings() {
       setDrawings(d);
       setAssets(a);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load drawings');
+      setError(toFriendlyError(e));
     } finally {
       setLoading(false);
     }
@@ -86,7 +88,7 @@ export function Drawings() {
     return <div className="p-6"><div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-20 animate-pulse rounded bg-slate-100" />)}</div></div>;
   }
   if (error) {
-    return <div className="p-6"><ErrorState message={error} onRetry={load} /></div>;
+    return <div className="p-6"><ErrorCard error={error} onRetry={load} /></div>;
   }
 
   return (

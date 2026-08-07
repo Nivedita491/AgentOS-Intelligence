@@ -22,7 +22,9 @@ import {
   fetchAssetDrawings,
 } from '@/lib/api';
 import type { Asset, TimelineEvent, Doc, Incident, Inspection, Alert, Entity, EntityRelationship, QMSRecord, EngineeringDrawing } from '@/types';
-import { Card, ErrorState, LoadingRow } from '@/components/ui-primitives';
+import { Card, LoadingRow } from '@/components/ui-primitives';
+import { ErrorCard } from '@/components/ErrorCard';
+import { toFriendlyError, type FriendlyError } from '@/shared/validation';
 import { StatusBadge } from '@/components/StatusBadge';
 import { formatDate, formatDateTime, cn, healthColor } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -40,7 +42,7 @@ export function AssetDetail() {
   const [qmsRecords, setQmsRecords] = useState<QMSRecord[]>([]);
   const [drawings, setDrawings] = useState<EngineeringDrawing[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FriendlyError | null>(null);
 
   const load = useCallback(async () => {
     if (!assetId) return;
@@ -68,7 +70,7 @@ export function AssetDetail() {
       setQmsRecords(qms);
       setDrawings(draws);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load asset');
+      setError(toFriendlyError(e));
     } finally {
       setLoading(false);
     }
@@ -82,10 +84,10 @@ export function AssetDetail() {
     return <div className="p-6"><div className="h-24 animate-pulse rounded bg-slate-100 mb-4" /><LoadingRow /></div>;
   }
   if (error) {
-    return <div className="p-6"><ErrorState message={error} onRetry={load} /></div>;
+    return <div className="p-6"><ErrorCard error={error} onRetry={load} /></div>;
   }
   if (!asset) {
-    return <div className="p-6"><ErrorState message="Asset not found" /></div>;
+    return <div className="p-6"><ErrorCard error={toFriendlyError(new Error('Asset not found'))} onRetry={load} /></div>;
   }
 
   const assetAlerts = alerts.filter((a) => a.status === 'Open');
@@ -225,6 +227,7 @@ export function AssetDetail() {
                     <ChevronRight className="h-4 w-4 text-slate-400 shrink-0" />
                   </Link>
                 ))}
+                {docs.length === 0 && <p className="text-[12px] text-slate-400 py-2">No documents linked</p>}
               </div>
             </Card>
           </div>

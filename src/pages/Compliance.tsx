@@ -3,12 +3,14 @@ import { Link } from 'react-router-dom';
 import { ShieldCheck, ShieldAlert, FileText, ChevronRight, RefreshCw, Loader2 } from 'lucide-react';
 import { fetchComplianceRules, fetchComplianceFindings, fetchAssets, fetchDocuments } from '@/lib/api';
 import type { ComplianceRule, ComplianceFinding, Asset, Doc } from '@/types';
-import { PageHeader, Card, ErrorState, EmptyState } from '@/components/ui-primitives';
+import { PageHeader, Card, EmptyState } from '@/components/ui-primitives';
 import { StatusBadge } from '@/components/StatusBadge';
 import { formatDate, cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
+import { ErrorCard } from '@/components/ErrorCard';
+import { toFriendlyError, type FriendlyError } from '@/shared/validation';
 
 export function Compliance() {
   const [rules, setRules] = useState<ComplianceRule[]>([]);
@@ -16,7 +18,7 @@ export function Compliance() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [docs, setDocs] = useState<Doc[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FriendlyError | null>(null);
   const [statusFilter, setStatusFilter] = useState('all');
   const [refreshing, setRefreshing] = useState(false);
 
@@ -35,7 +37,7 @@ export function Compliance() {
       setAssets(a);
       setDocs(d);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load compliance data');
+      setError(toFriendlyError(e));
     } finally {
       setLoading(false);
     }
@@ -60,7 +62,7 @@ export function Compliance() {
     return <div className="p-6"><div className="space-y-2">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-12 animate-pulse rounded bg-slate-100" />)}</div></div>;
   }
   if (error) {
-    return <div className="p-6"><ErrorState message={error} onRetry={load} /></div>;
+    return <div className="p-6"><ErrorCard error={error} onRetry={load} /></div>;
   }
 
   const counts = {

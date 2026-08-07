@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom';
 import { Upload, Search, FileText, ChevronRight, X } from 'lucide-react';
 import { fetchDocuments, fetchAssets, uploadDocument } from '@/lib/api';
 import type { Doc, Asset } from '@/types';
-import { PageHeader, ErrorState, EmptyState } from '@/components/ui-primitives';
+import { PageHeader, EmptyState } from '@/components/ui-primitives';
+import { ErrorCard } from '@/components/ErrorCard';
+import { toFriendlyError, type FriendlyError } from '@/shared/validation';
 import { StatusBadge } from '@/components/StatusBadge';
 import { formatDateTime, cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
@@ -30,7 +32,7 @@ export function Documents() {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FriendlyError | null>(null);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -47,7 +49,7 @@ export function Documents() {
       setDocs(d);
       setAssets(a);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load documents');
+      setError(toFriendlyError(e));
     } finally {
       setLoading(false);
     }
@@ -107,7 +109,7 @@ export function Documents() {
     return <div className="p-6"><div className="space-y-2">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-12 animate-pulse rounded bg-slate-100" />)}</div></div>;
   }
   if (error) {
-    return <div className="p-6"><ErrorState message={error} onRetry={load} /></div>;
+    return <div className="p-6"><ErrorCard error={error} onRetry={load} /></div>;
   }
 
   return (

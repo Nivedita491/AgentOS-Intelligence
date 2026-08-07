@@ -2,14 +2,16 @@ import { useCallback, useEffect, useState } from 'react';
 import { BrainCircuit, History, RefreshCw, Database } from 'lucide-react';
 import { fetchEpisodicMemory, fetchWorkingMemory } from '@/lib/api';
 import type { EpisodicMemoryRecord, WorkingMemoryRecord } from '@/types';
-import { PageHeader, ErrorState } from '@/components/ui-primitives';
+import { PageHeader } from '@/components/ui-primitives';
 import { formatDateTime } from '@/lib/utils';
+import { ErrorCard } from '@/components/ErrorCard';
+import { toFriendlyError, type FriendlyError } from '@/shared/validation';
 
 export function Memory() {
   const [working, setWorking] = useState<WorkingMemoryRecord[]>([]);
   const [episodic, setEpisodic] = useState<EpisodicMemoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FriendlyError | null>(null);
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -18,14 +20,14 @@ export function Memory() {
       setWorking(workingRows);
       setEpisodic(episodicRows);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load shared memory');
+      setError(toFriendlyError(err));
     } finally {
       setLoading(false);
     }
   }, []);
   useEffect(() => { load(); }, [load]);
   if (loading) return <div className="p-6"><div className="h-80 animate-pulse rounded bg-slate-100" /></div>;
-  if (error) return <div className="p-6"><ErrorState message={error} onRetry={load} /></div>;
+  if (error) return <div className="p-6"><ErrorCard error={error} onRetry={load} /></div>;
   return (
     <div className="max-w-[1400px] mx-auto p-4 lg:p-6">
       <div className="flex items-start justify-between gap-3"><PageHeader title="Shared Memory" description="Working and episodic records from real RAG executions. Semantic and graph memory live in the indexed corpus." /><button onClick={load} className="mt-1 inline-flex items-center gap-1 rounded-md border border-slate-200 px-2.5 py-1.5 text-[12px] text-slate-600 hover:bg-slate-50"><RefreshCw className="h-3.5 w-3.5" /> Refresh</button></div>

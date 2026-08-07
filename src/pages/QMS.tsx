@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom';
 import { AlertTriangle, Search } from 'lucide-react';
 import { fetchQMSRecords, fetchAssets, updateQMSRecord } from '@/lib/api';
 import type { QMSRecord, Asset } from '@/types';
-import { PageHeader, Card, ErrorState, EmptyState } from '@/components/ui-primitives';
+import { PageHeader, Card, EmptyState } from '@/components/ui-primitives';
+import { ErrorCard } from '@/components/ErrorCard';
+import { toFriendlyError, type FriendlyError } from '@/shared/validation';
 import { StatusBadge } from '@/components/StatusBadge';
 import { formatDate, cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
@@ -27,7 +29,7 @@ export function QMS() {
   const [records, setRecords] = useState<QMSRecord[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FriendlyError | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [tab, setTab] = useState('all');
@@ -40,7 +42,7 @@ export function QMS() {
       setRecords(r);
       setAssets(a);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load QMS records');
+      setError(toFriendlyError(e));
     } finally {
       setLoading(false);
     }
@@ -56,7 +58,7 @@ export function QMS() {
       setRecords((prev) => prev.map((r) => (r.id === id ? { ...r, status } : r)));
       toast.success('QMS record updated');
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Update failed');
+      toast.error(toFriendlyError(e).title);
     }
   };
 
@@ -74,7 +76,7 @@ export function QMS() {
     return <div className="p-6"><div className="space-y-2">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-16 animate-pulse rounded bg-slate-100" />)}</div></div>;
   }
   if (error) {
-    return <div className="p-6"><ErrorState message={error} onRetry={load} /></div>;
+    return <div className="p-6"><ErrorCard error={error} onRetry={load} /></div>;
   }
 
   const openCount = records.filter((r) => r.status === 'Open').length;

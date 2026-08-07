@@ -3,6 +3,8 @@ import { createClient } from "npm:@supabase/supabase-js@2.58.0";
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2.58.0";
 import { hybridRetrieve } from "../_shared/rag/hybridRetriever.ts";
 import type { RetrievalCandidate, RetrievalFilters } from "../_shared/rag/types.ts";
+import { validateRequest, generateRequestId, badRequest, internalError, logFailure, logSuccess } from "../_shared/validation/index.ts";
+import { ForgeAIRequestSchema } from "../_shared/validation/index.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -194,12 +196,23 @@ async function recordMemory(
 
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
-  if (request.method !== "POST") return json({ success: false, error: "Method not allowed" }, 405);
+  if (request.method !== "POST") {
+    const err = badRequest("Method not allowed");
+    return json(err, 405);
+  }
   const startedAt = Date.now();
+  const requestId = generateRequestId();
+  const endpoint = "forge-ai";
+  const context = { requestId, endpoint };
   try {
-    const body = await request.json();
-    const query = typeof body.query === "string" ? body.query.trim() : "";
-    if (!query || query.length > 8000) return json({ success: false, error: "A query between 1 and 8,000 characters is required." }, 400);
+    const rawBody = await request.json();
+    const parsed = validateRequest(rawBody, ForgeAIRequestSchema, requestId);
+    if (!parsed.ok) {
+      logFailure(context, { code: "VALIDATION_ERROR", validationErrors: parsed.error.details, latencyMs: Date.now() - startedAt });
+      return json(parsed.error, 400);
+    }
+    const body = parsed.data;
+    const query = body.query.trim();
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
@@ -212,7 +225,10 @@ Deno.serve(async (request) => {
       filters.documentIds = [...new Set([...(filters.documentIds ?? []), ...(linkedDocuments ?? []).map((document: { id: string }) => document.id)])];
     }
     const retrieval = await hybridRetrieve(supabase, query, filters);
-    if (body.mode === "search") return json({ success: true, retrieval });
+    if (body.mode === "search") {
+      logSuccess(context, Date.now() - startedAt, { mode: "search", evidence: retrieval.evidence.length });
+      return json({ success: true, requestId, retrieval });
+    }
     const generated = await synthesizeWithGemini(query, retrieval.evidence);
     const answer = generated ? validateGenerated(generated, retrieval.evidence) : evidenceOnlyAnswer(query, retrieval.evidence);
     const sources = retrieval.citations.map((citation) => ({
@@ -234,8 +250,10 @@ Deno.serve(async (request) => {
       { agent: generated ? "Grounded Gemini" : "Evidence-only mode", role: "answer synthesis", action: generated ? "Generated from final retrieved context." : "No model synthesis; returned retrieved evidence only.", evidenceCount: retrieval.evidence.length, status: generated ? "completed" : "skipped" },
       { agent: "Shared Memory", role: "working + episodic record", action: "Recorded this execution with retrieval debug data.", evidenceCount: retrieval.evidence.length, status: "completed" },
     ];
+    logSuccess(context, Date.now() - startedAt, { mode: "generate", evidence: retrieval.evidence.length, memory: true });
     return json({
       success: true,
+      requestId,
       answer: {
         ...answer,
         sources,
@@ -249,11 +267,13 @@ Deno.serve(async (request) => {
           knowledgeGraph: { count: retrieval.debug.graphResults.length, sources: retrieval.debug.graphResults.map((item) => item.documentName) },
         },
         retrievalDebug: retrieval.debug,
-        memory: { taskId, executionId },
+        memory: { taskId, executionId, requestId },
       },
     });
   } catch (error) {
     console.error("forge-ai", error);
-    return json({ success: false, error: message(error) }, 500);
+    logFailure(context, { code: "INTERNAL_ERROR", latencyMs: Date.now() - startedAt });
+    const err = internalError(message(error), requestId);
+    return json(err, 500);
   }
 });

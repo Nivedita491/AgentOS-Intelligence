@@ -4,6 +4,8 @@ import { ragSearch } from '@/lib/api';
 import type { RetrievalCandidateDebug, RetrievalDebug } from '@/types';
 import { PageHeader } from '@/components/ui-primitives';
 import { Input } from '@/components/ui/input';
+import { ErrorCard } from '@/components/ErrorCard';
+import { toFriendlyError, type FriendlyError } from '@/shared/validation';
 
 const EXAMPLES = [
   'What are the currently approved AgentOS features?',
@@ -67,7 +69,7 @@ export function RagSearch() {
   const [tags, setTags] = useState('');
   const [result, setResult] = useState<RetrievalDebug | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FriendlyError | null>(null);
 
   const runSearch = async (event?: React.FormEvent) => {
     event?.preventDefault();
@@ -80,7 +82,7 @@ export function RagSearch() {
         tags: tags.split(',').map((tag) => tag.trim()).filter(Boolean),
       }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'RAG search failed');
+      setError(toFriendlyError(err));
     } finally {
       setLoading(false);
     }
@@ -100,7 +102,7 @@ export function RagSearch() {
           {EXAMPLES.map((example) => <button type="button" key={example} onClick={() => setQuery(example)} className="rounded-full border border-slate-200 px-2 py-1 text-[10px] text-slate-500 hover:border-blue-300 hover:text-blue-700">{example}</button>)}
         </div>
       </form>
-      {error && <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-[12px] text-red-700">{error}</div>}
+      {error && <div className="mt-4"><ErrorCard error={error} onRetry={() => runSearch()} /></div>}
       {result && (
         <div className="mt-4 space-y-4">
           <div className="grid gap-3 lg:grid-cols-4">

@@ -22,6 +22,21 @@ import type {
   EpisodicMemoryRecord,
   RetrievalDebug,
 } from '@/types';
+import type { z } from 'zod';
+import {
+  assertRequest,
+  parseResponse,
+  generateRequestId,
+  isApiError,
+  HTTP_STATUS,
+  type ApiError,
+  CopilotQuerySchema,
+  DocumentUploadSchema,
+  DocumentActionSchema,
+  DocumentCreateResponseSchema,
+  DocumentActionResponseSchema,
+  ForgeAIResponseSchema,
+} from '@/shared/validation';
 
 const EDGE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/forge-ai`;
 const INGEST_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/rag-ingest`;
@@ -177,7 +192,7 @@ export async function uploadDocument(
   let document: Doc | null = null;
   try {
     onStatus?.('Uploaded');
-    const created = await invokeRagIngest<{ document: Doc }>({
+    const createRequest = {
       action: 'create',
       storagePath,
       originalName: file.name,
@@ -186,9 +201,12 @@ export async function uploadDocument(
       linkedAssetId,
       documentType: classifyDocument(file.name),
       department: 'Operations',
-    });
+    };
+    assertRequest(createRequest, DocumentUploadSchema);
+    const created = await invokeRagIngest<{ document: Doc }>(createRequest, DocumentCreateResponseSchema);
     document = created.document;
-    const processing = invokeRagIngest<{ documentId: string }>({ action: 'process', documentId: document.id });
+    const actionRequest = assertRequest({ action: 'process', documentId: document.id }, DocumentActionSchema);
+    const processing = invokeRagIngest<{ documentId: string }>(actionRequest, DocumentActionResponseSchema);
     let settled = false;
     let processingError: unknown = null;
     void processing.then(
@@ -241,26 +259,85 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
-async function invokeRagIngest<T>(body: Record<string, unknown>): Promise<T> {
-  const response = await fetch(INGEST_URL, {
+/**
+ * The Edge Functions return their data fields at the top level of the success
+ * envelope (e.g. `{ success: true, requestId, document })`). This helper strips
+ * the envelope keys and returns the remainder as the typed payload.
+ */
+function unwrapEdgePayload<T>(payload: Record<string, unknown>): T {
+  const rest: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(payload)) {
+    if (key !== 'success' && key !== 'requestId') rest[key] = value;
+  }
+  return rest as unknown as T;
+}
+
+/**
+ * Invokes a Supabase Edge Function. On success returns the data payload; on
+ * failure throws a normalized ApiError so callers render friendly messages
+ * with a requestId. Requests carry a requestId header.
+ */
+async function invokeEdge<T>(
+  url: string,
+  body: Record<string, unknown>,
+  opLabel: string,
+  responseSchema?: z.ZodTypeAny,
+): Promise<T> {
+  const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'X-Request-Id': generateRequestId(),
       Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
     },
     body: JSON.stringify(body),
   });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload?.success) throw new Error(payload?.error ?? `Ingestion service error (${response.status})`);
-  return payload as T;
+  const payload = await response.json().catch(() => null) as (Record<string, unknown> & { success?: boolean; requestId?: string; message?: string }) | ApiError | null;
+
+  // Normalize any standard error envelope from the server.
+  if (isApiError(payload)) throw payload;
+
+  if (!response.ok || !payload || payload.success !== true) {
+    const status = response.status;
+    const code = status >= 500
+      ? 'INTERNAL_ERROR'
+      : status === HTTP_STATUS.NOT_FOUND ? 'NOT_FOUND'
+      : status === HTTP_STATUS.UNAUTHORIZED ? 'UNAUTHORIZED'
+      : status === HTTP_STATUS.FORBIDDEN ? 'FORBIDDEN'
+      : status === HTTP_STATUS.CONFLICT ? 'CONFLICT'
+      : status === HTTP_STATUS.DOCUMENT_TOO_LARGE ? 'DOCUMENT_TOO_LARGE'
+      : status === HTTP_STATUS.UNSUPPORTED_FORMAT ? 'UNSUPPORTED_FORMAT'
+      : status === HTTP_STATUS.RATE_LIMITED ? 'RATE_LIMITED'
+      : 'VALIDATION_ERROR';
+    throw {
+      success: false,
+      requestId: payload?.requestId ?? generateRequestId(),
+      code,
+      message: payload?.message ?? `Service error (${opLabel}, ${status})`,
+      timestamp: new Date().toISOString(),
+    } as ApiError;
+  }
+
+  if (responseSchema) {
+    const validation = parseResponse(payload, responseSchema, payload.requestId as string | undefined);
+    if (!validation.success) throw validation.error;
+  }
+
+  return unwrapEdgePayload<T>(payload);
+}
+
+async function invokeRagIngest<T>(body: Record<string, unknown>, responseSchema?: z.ZodTypeAny): Promise<T> {
+  return invokeEdge<T>(INGEST_URL, body, 'Ingestion', responseSchema);
 }
 
 export async function reindexDocument(documentId: string): Promise<void> {
-  await invokeRagIngest({ action: 'reindex', documentId });
+  const actionRequest = assertRequest({ action: 'reindex', documentId }, DocumentActionSchema);
+  await invokeRagIngest<DocumentActionResponse>(actionRequest, DocumentActionResponseSchema);
 }
 
 export async function deleteDocument(documentId: string): Promise<void> {
-  await invokeRagIngest({ action: 'delete', documentId });
+  const actionRequest = assertRequest({ action: 'delete', documentId }, DocumentActionSchema);
+  await invokeRagIngest<DocumentActionResponse>(actionRequest, DocumentActionResponseSchema);
 }
 
 // ---------- Maintenance / Incidents / Inspections ----------
@@ -358,24 +435,14 @@ export async function copilotQuery(
   query: string,
   assetId?: string | null,
 ): Promise<{ answer: AnswerPayload; sources: CitationSource[]; fallback: boolean }> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-  };
-  const res = await fetch(EDGE_URL, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ query, assetId }),
-  });
-  if (!res.ok) {
-    throw new Error(`AI service error (${res.status})`);
-  }
-  const body = await res.json();
-  if (!body || !body.answer) throw new Error('Invalid AI response');
+  const requestBody = { query, assetId, mode: 'generate' as const };
+  assertRequest(requestBody, CopilotQuerySchema);
+  const payload = await invokeEdge<{ answer: AnswerPayload }>(EDGE_URL, requestBody, 'Copilot', ForgeAIResponseSchema);
+  if (!payload.answer) throw new Error('Invalid AI response');
   return {
-    answer: body.answer as AnswerPayload,
-    sources: (body.answer.sources ?? []) as CitationSource[],
-    fallback: !!body.answer.fallback,
+    answer: payload.answer,
+    sources: (payload.answer.sources ?? []) as CitationSource[],
+    fallback: !!payload.answer.fallback,
   };
 }
 
@@ -383,20 +450,13 @@ export async function ragSearch(
   query: string,
   filters?: Record<string, unknown>,
 ): Promise<RetrievalDebug> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-  };
-  const response = await fetch(EDGE_URL, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ query, filters, mode: 'search' }),
-  });
-  const body = await response.json().catch(() => null);
-  if (!response.ok || !body?.success || !body?.retrieval?.debug) {
-    throw new Error(body?.error ?? `RAG search service error (${response.status})`);
+  const requestBody = { query, filters, mode: 'search' as const };
+  assertRequest(requestBody, CopilotQuerySchema);
+  const payload = await invokeEdge<{ retrieval: unknown }>(EDGE_URL, requestBody, 'RAG Search', ForgeAIResponseSchema);
+  if (!payload.retrieval || typeof payload.retrieval !== 'object') {
+    throw new Error(`RAG search service error: invalid response`);
   }
-  return body.retrieval.debug as RetrievalDebug;
+  return payload.retrieval as RetrievalDebug;
 }
 
 export async function saveAIQuery(row: {

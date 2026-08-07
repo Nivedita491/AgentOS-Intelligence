@@ -12,7 +12,9 @@ import 'reactflow/dist/style.css';
 import { Search, X, Expand } from 'lucide-react';
 import { fetchEntityEvidence, fetchGraphData } from '@/lib/api';
 import type { Entity, EntityRelationship } from '@/types';
-import { PageHeader, ErrorState } from '@/components/ui-primitives';
+import { PageHeader } from '@/components/ui-primitives';
+import { ErrorCard } from '@/components/ErrorCard';
+import { toFriendlyError, type FriendlyError } from '@/shared/validation';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 
@@ -50,7 +52,7 @@ const typeColors: Record<string, string> = {
 export function KnowledgeGraph() {
   const [data, setData] = useState<{ entities: Entity[]; relationships: EntityRelationship[] }>({ entities: [], relationships: [] });
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FriendlyError | null>(null);
   const [search, setSearch] = useState('');
   const [typeFilters, setTypeFilters] = useState<Set<string>>(new Set());
   const [relationshipFilters, setRelationshipFilters] = useState<Set<string>>(new Set());
@@ -68,7 +70,7 @@ export function KnowledgeGraph() {
       setTypeFilters(new Set(d.entities.map((entity) => entity.entity_type)));
       setRelationshipFilters(new Set(d.relationships.map((relationship) => relationship.relationship_type)));
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load graph');
+      setError(toFriendlyError(e));
     } finally {
       setLoading(false);
     }
@@ -196,7 +198,7 @@ export function KnowledgeGraph() {
     return <div className="p-6"><div className="h-96 animate-pulse rounded bg-slate-100" /></div>;
   }
   if (error) {
-    return <div className="p-6"><ErrorState message={error} onRetry={load} /></div>;
+    return <div className="p-6"><ErrorCard error={error} onRetry={load} /></div>;
   }
 
   const selectedRels = selected

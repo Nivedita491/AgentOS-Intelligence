@@ -3,7 +3,9 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, FileText, Tag, Building, Calendar, RefreshCw, Trash2 } from 'lucide-react';
 import { fetchDocument, fetchDocumentChunks, fetchAssets, reindexDocument, deleteDocument } from '@/lib/api';
 import type { Doc, DocChunk, Asset } from '@/types';
-import { Card, ErrorState } from '@/components/ui-primitives';
+import { Card } from '@/components/ui-primitives';
+import { ErrorCard } from '@/components/ErrorCard';
+import { toFriendlyError, type FriendlyError } from '@/shared/validation';
 import { StatusBadge } from '@/components/StatusBadge';
 import { formatDateTime, formatDate } from '@/lib/utils';
 
@@ -14,7 +16,7 @@ export function DocumentDetail() {
   const [chunks, setChunks] = useState<DocChunk[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FriendlyError | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'reindex' | 'delete' | null>(null);
 
@@ -32,7 +34,7 @@ export function DocumentDetail() {
       setChunks(c);
       setAssets(a);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load document');
+      setError(toFriendlyError(e));
     } finally {
       setLoading(false);
     }
@@ -46,10 +48,10 @@ export function DocumentDetail() {
     return <div className="p-6"><div className="h-24 animate-pulse rounded bg-slate-100 mb-4" /><div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-12 animate-pulse rounded bg-slate-100" />)}</div></div>;
   }
   if (error) {
-    return <div className="p-6"><ErrorState message={error} onRetry={load} /></div>;
+    return <div className="p-6"><ErrorCard error={error} onRetry={load} /></div>;
   }
   if (!doc) {
-    return <div className="p-6"><ErrorState message="Document not found" /></div>;
+    return <div className="p-6"><ErrorCard error={toFriendlyError(new Error('Document not found'))} onRetry={load} /></div>;
   }
 
   const linkedAsset = assets.find((a) => a.id === doc.linked_asset_id);
@@ -63,7 +65,7 @@ export function DocumentDetail() {
       await reindexDocument(doc.id);
       await load();
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : 'Reindexing failed');
+      setActionError(toFriendlyError(e).title);
     } finally {
       setBusy(null);
     }
@@ -77,7 +79,7 @@ export function DocumentDetail() {
       await deleteDocument(doc.id);
       navigate('/documents');
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : 'Delete failed');
+      setActionError(toFriendlyError(e).title);
     } finally {
       setBusy(null);
     }

@@ -1,12 +1,14 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Building, Cpu, Database, Shield, Info } from 'lucide-react';
 import { fetchSettings } from '@/lib/api';
-import { PageHeader, Card, ErrorState } from '@/components/ui-primitives';
+import { PageHeader, Card } from '@/components/ui-primitives';
+import { ErrorCard } from '@/components/ErrorCard';
+import { toFriendlyError, type FriendlyError } from '@/shared/validation';
 
 export function Settings() {
   const [settings, setSettings] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FriendlyError | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -15,7 +17,7 @@ export function Settings() {
       const s = await fetchSettings();
       setSettings(s);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load settings');
+      setError(toFriendlyError(e));
     } finally {
       setLoading(false);
     }
@@ -29,7 +31,7 @@ export function Settings() {
     return <div className="p-6"><div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-20 animate-pulse rounded bg-slate-100" />)}</div></div>;
   }
   if (error) {
-    return <div className="p-6"><ErrorState message={error} onRetry={load} /></div>;
+    return <div className="p-6"><ErrorCard error={error} onRetry={load} /></div>;
   }
 
   return (

@@ -10,7 +10,9 @@ import {
 } from '@/lib/api';
 import type { Asset, MaintenanceEvent, Incident, RecommendedAction } from '@/types';
 import type { AnswerPayload } from '@/types';
-import { PageHeader, Card, ErrorState, EmptyState } from '@/components/ui-primitives';
+import { PageHeader, Card, EmptyState } from '@/components/ui-primitives';
+import { ErrorCard } from '@/components/ErrorCard';
+import { toFriendlyError, type FriendlyError } from '@/shared/validation';
 import { StatusBadge } from '@/components/StatusBadge';
 import { formatDate, cn, confidenceColor } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -33,7 +35,7 @@ export function Maintenance() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [actions, setActions] = useState<RecommendedAction[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FriendlyError | null>(null);
 
   const [rcaAsset, setRcaAsset] = useState<string>('P-204');
   const [rcaSymptom, setRcaSymptom] = useState<string>('Bearing temperature elevated');
@@ -56,7 +58,7 @@ export function Maintenance() {
       setIncidents(i);
       setActions(ac);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load maintenance data');
+      setError(toFriendlyError(e));
     } finally {
       setLoading(false);
     }
@@ -74,7 +76,7 @@ export function Maintenance() {
       const { answer } = await copilotQuery(query);
       setRcaResult(answer);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'RCA failed');
+      toast.error(toFriendlyError(e).title);
     } finally {
       setRcaLoading(false);
     }
@@ -84,7 +86,7 @@ export function Maintenance() {
     return <div className="p-6"><div className="space-y-2">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-12 animate-pulse rounded bg-slate-100" />)}</div></div>;
   }
   if (error) {
-    return <div className="p-6"><ErrorState message={error} onRetry={load} /></div>;
+    return <div className="p-6"><ErrorCard error={error} onRetry={load} /></div>;
   }
 
   const riskQueue = assets

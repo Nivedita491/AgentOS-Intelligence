@@ -19,6 +19,8 @@ import { copilotQuery, saveAIQuery, fetchAIQueries, fetchAssets, createRecommend
 import type { AnswerPayload, CitationSource, Asset, AIQuery } from '@/types';
 import { cn, confidenceColor } from '@/lib/utils';
 import { toast } from 'sonner';
+import { ErrorCard } from '@/components/ErrorCard';
+import { toFriendlyError, type FriendlyError } from '@/shared/validation';
 
 const SUGGESTED = [
   'Why is Pump P-204 repeatedly overheating?',
@@ -36,7 +38,7 @@ interface Message {
   answer: AnswerPayload | null;
   sources: CitationSource[];
   loading: boolean;
-  error?: string;
+  error?: FriendlyError;
   fallback?: boolean;
 }
 
@@ -108,9 +110,9 @@ export function Copilot() {
         });
         load();
       } catch (e) {
-        const msg = e instanceof Error ? e.message : 'Query failed';
-        setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, loading: false, error: msg } : m)));
-        toast.error(msg);
+        const friendly = toFriendlyError(e);
+        setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, loading: false, error: friendly } : m)));
+        toast.error(friendly.message);
       } finally {
         clearInterval(stageTimer);
         setThinking(false);
@@ -258,9 +260,7 @@ export function Copilot() {
                     <span>{stage || 'Processing…'}</span>
                   </div>
                 ) : m.error ? (
-                  <div className="rounded-lg border border-red-200 bg-red-50/50 p-3 text-[13px] text-red-700">
-                    {m.error}
-                  </div>
+                  <ErrorCard error={m.error} onRetry={() => runQuery(m.query)} />
                 ) : m.answer ? (
                   <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-4">
                     {m.fallback && (

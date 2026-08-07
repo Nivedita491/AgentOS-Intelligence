@@ -5,6 +5,8 @@ import { createEmbeddingProvider, toPgVector } from "../_shared/rag/embeddingSer
 import { buildGraphForDocument } from "../_shared/rag/graphService.ts";
 import { bytesFromArrayBuffer, inferSourceType, parseUploadedDocument, semanticChunk } from "../_shared/rag/ingestion.ts";
 import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL } from "../_shared/rag/types.ts";
+import { validateRequest, generateRequestId, badRequest, internalError, unsupportedFormat, documentTooLarge, logFailure, logSuccess } from "../_shared/validation/index.ts";
+import { RagIngestCreateSchema, RagIngestActionSchema } from "../_shared/validation/index.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -211,48 +213,72 @@ async function processDocument(supabase: Supabase, organizationId: string, docum
 
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
-  if (request.method !== "POST") return json({ success: false, error: "Method not allowed" }, 405);
+  if (request.method !== "POST") return json(badRequest("Method not allowed"), 405);
+  const startedAt = Date.now();
+  const requestId = generateRequestId();
+  const endpoint = "rag-ingest";
+  const context = { requestId, endpoint };
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
     { auth: { persistSession: false } },
   );
   try {
-    const body = await request.json();
-    const organization = await getDefaultOrganization(supabase);
-    if (body.action === "create") {
-      const originalName = typeof body.originalName === "string" ? body.originalName : "";
-      const storagePath = typeof body.storagePath === "string" ? body.storagePath : "";
-      const size = Number(body.fileSize);
-      const extension = fileExtension(originalName);
-      if (!originalName || !storagePath || !ALLOWED_EXTENSIONS.has(extension)) return json({ success: false, error: "Unsupported file type." }, 400);
-      if (!storagePath.startsWith(`${organization.slug}/documents/`)) return json({ success: false, error: "Invalid document storage path." }, 400);
-      if (!Number.isFinite(size) || size <= 0 || size > MAX_BYTES) return json({ success: false, error: "File must be between 1 byte and 15 MB." }, 400);
+    const rawBody = await request.json();
+    const action = rawBody && typeof rawBody === "object" ? (rawBody as Record<string, unknown>).action : undefined;
+
+    // Validate the create request with the dedicated schema.
+    if (action === "create") {
+      const parsed = validateRequest(rawBody, RagIngestCreateSchema, requestId);
+      if (!parsed.ok) {
+        logFailure(context, { operation: "create", code: "VALIDATION_ERROR", validationErrors: parsed.error.details, latencyMs: Date.now() - startedAt });
+        const extension = fileExtension((rawBody as Record<string, unknown>).originalName as string);
+        const size = Number((rawBody as Record<string, unknown>).fileSize);
+        if (extension && !ALLOWED_EXTENSIONS.has(extension)) return json(unsupportedFormat("Unsupported file type.", requestId), 415);
+        if (Number.isFinite(size) && size > MAX_BYTES) return json(documentTooLarge(`File exceeds ${Math.round(MAX_BYTES / (1024 * 1024))} MB limit.`, requestId), 413);
+        return json(parsed.error, 400);
+      }
+      const body = parsed.data;
+      const organization = await getDefaultOrganization(supabase);
+      if (!body.storagePath.startsWith(`${organization.slug}/documents/`)) {
+        logFailure(context, { operation: "create", code: "VALIDATION_ERROR", message: "Invalid document storage path.", latencyMs: Date.now() - startedAt });
+        return json(badRequest("Invalid document storage path.", undefined, requestId), 400);
+      }
       const { data, error } = await supabase.from("documents").insert({
         organization_id: organization.id,
-        filename: storagePath.split("/").at(-1),
-        original_name: originalName.replace(/[\\/\0]/g, "_").slice(0, 255),
-        storage_path: storagePath,
+        filename: body.storagePath.split("/").at(-1),
+        original_name: body.originalName.replace(/[\\/\0]/g, "_").slice(0, 255),
+        storage_path: body.storagePath,
         mime_type: body.mimeType ?? "application/octet-stream",
-        file_size: size,
-        document_type: body.documentType ?? classifyDocument(originalName),
-        classification: body.documentType ?? classifyDocument(originalName),
+        file_size: body.fileSize,
+        document_type: body.documentType ?? classifyDocument(body.originalName),
+        classification: body.documentType ?? classifyDocument(body.originalName),
         linked_asset_id: body.linkedAssetId ?? null,
         source_department: body.department ?? null,
-        metadata_json: { ...(body.metadata ?? {}), uploadedBy: "browser", originalSize: size },
+        metadata_json: { ...(body.metadata ?? {}), uploadedBy: "browser", originalSize: body.fileSize },
         status: "Uploaded",
         processing_stage: "uploaded",
       }).select().single();
       if (error) throw error;
-      return json({ success: true, document: data });
+      logSuccess(context, Date.now() - startedAt, { operation: "create", documentId: data.id });
+      return json({ success: true, requestId, document: data });
     }
-    const documentId = typeof body.documentId === "string" ? body.documentId : "";
-    if (!documentId) return json({ success: false, error: "documentId is required." }, 400);
-    if (body.action === "process" || body.action === "reindex") {
+
+    // Validate process / reindex / delete against the action schema.
+    const parsedAction = validateRequest(rawBody, RagIngestActionSchema, requestId);
+    if (!parsedAction.ok) {
+      logFailure(context, { operation: action ?? "unknown", code: "VALIDATION_ERROR", validationErrors: parsedAction.error.details, latencyMs: Date.now() - startedAt });
+      return json(parsedAction.error, 400);
+    }
+    const actionBody = parsedAction.data;
+    const organization = await getDefaultOrganization(supabase);
+    const documentId = actionBody.documentId;
+    if (actionBody.action === "process" || actionBody.action === "reindex") {
       const result = await processDocument(supabase, organization.id, documentId);
-      return json({ success: true, ...result });
+      logSuccess(context, Date.now() - startedAt, { operation: actionBody.action, documentId });
+      return json({ success: true, requestId, ...result });
     }
-    if (body.action === "delete") {
+    if (actionBody.action === "delete") {
       const { data: document, error: findError } = await supabase.from("documents").select("storage_path").eq("id", documentId).eq("organization_id", organization.id).single();
       if (findError) throw findError;
       await clearDocumentIndex(supabase, organization.id, documentId);
@@ -263,11 +289,13 @@ Deno.serve(async (request) => {
         if (storageError) throw new Error(`Document row was deleted but storage cleanup failed: ${storageError.message}`);
       }
       await supabase.rpc("prune_orphan_graph_records", { p_organization_id: organization.id });
-      return json({ success: true, documentId });
+      logSuccess(context, Date.now() - startedAt, { operation: "delete", documentId });
+      return json({ success: true, requestId, documentId });
     }
-    return json({ success: false, error: "Unknown ingestion action." }, 400);
+    return json(badRequest("Unknown ingestion action.", undefined, requestId), 400);
   } catch (error) {
     console.error("rag-ingest", error);
-    return json({ success: false, error: publicMessage(error) }, 500);
+    logFailure(context, { operation: "unknown", code: "INTERNAL_ERROR", latencyMs: Date.now() - startedAt });
+    return json(internalError(publicMessage(error), requestId), 500);
   }
 });

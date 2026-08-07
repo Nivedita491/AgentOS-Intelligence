@@ -362,6 +362,8 @@ npm run lint
 npm run build
 ```
 
+The application uses a structured API validation layer with Zod request/response schemas, standard envelopes, and typed frontend error handling.
+
 ---
 
 ## Environment Variables

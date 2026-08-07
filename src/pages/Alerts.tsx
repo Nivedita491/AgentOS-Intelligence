@@ -3,17 +3,19 @@ import { Link } from 'react-router-dom';
 import { Bell, AlertTriangle, CheckCircle2, ChevronRight, Loader2 } from 'lucide-react';
 import { fetchAlerts, fetchAssets, updateAlert } from '@/lib/api';
 import type { Alert, Asset } from '@/types';
-import { PageHeader, ErrorState, EmptyState } from '@/components/ui-primitives';
+import { PageHeader, EmptyState } from '@/components/ui-primitives';
 import { StatusBadge } from '@/components/StatusBadge';
 import { cn, severityClass, timeAgo } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
+import { ErrorCard } from '@/components/ErrorCard';
+import { toFriendlyError, type FriendlyError } from '@/shared/validation';
 
 export function Alerts() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FriendlyError | null>(null);
   const [severityFilter, setSeverityFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [updating, setUpdating] = useState<string | null>(null);
@@ -26,7 +28,7 @@ export function Alerts() {
       setAssets(a);
       setAlerts(al);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load alerts');
+      setError(toFriendlyError(e));
     } finally {
       setLoading(false);
     }
@@ -59,7 +61,7 @@ export function Alerts() {
     return <div className="p-6"><div className="space-y-2">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-16 animate-pulse rounded bg-slate-100" />)}</div></div>;
   }
   if (error) {
-    return <div className="p-6"><ErrorState message={error} onRetry={load} /></div>;
+    return <div className="p-6"><ErrorCard error={error} onRetry={load} /></div>;
   }
 
   const openCount = alerts.filter((a) => a.status === 'Open').length;
