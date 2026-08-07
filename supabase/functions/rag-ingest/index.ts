@@ -11,7 +11,7 @@ import { RagIngestCreateSchema, RagIngestActionSchema } from "../_shared/validat
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, X-Request-Id",
 };
 const BUCKET = "organizational-documents";
 const MAX_BYTES = 15 * 1024 * 1024;
@@ -134,6 +134,8 @@ async function processDocument(supabase: Supabase, organizationId: string, docum
     if (!document.storage_path) throw new Error("This document has no storage object. Upload it again before indexing.");
 
     await clearDocumentIndex(supabase, organizationId, documentId);
+    const { error: pruneError } = await supabase.rpc("prune_orphan_graph_records", { p_organization_id: organizationId });
+    if (pruneError) throw pruneError;
     await updateStage(supabase, documentId, "extracting", { processing_error: null });
     const { data: object, error: storageError } = await supabase.storage.from(BUCKET).download(document.storage_path);
     if (storageError) throw new Error(`Unable to read the uploaded file: ${storageError.message}`);
@@ -218,12 +220,13 @@ Deno.serve(async (request) => {
   const requestId = generateRequestId();
   const endpoint = "rag-ingest";
   const context = { requestId, endpoint };
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL") ?? "",
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-    { auth: { persistSession: false } },
-  );
   try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!supabaseUrl || !serviceRoleKey) {
+      return json(internalError("Server configuration is missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.", requestId), 500);
+    }
+    const supabase = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
     const rawBody = await request.json();
     const action = rawBody && typeof rawBody === "object" ? (rawBody as Record<string, unknown>).action : undefined;
 

@@ -9,7 +9,7 @@ import { ForgeAIRequestSchema } from "../_shared/validation/index.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, X-Request-Id",
 };
 
 type Supabase = SupabaseClient;
@@ -213,11 +213,12 @@ Deno.serve(async (request) => {
     }
     const body = parsed.data;
     const query = body.query.trim();
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-      { auth: { persistSession: false } },
-    );
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!supabaseUrl || !serviceRoleKey) {
+      return json(internalError("Server configuration is missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.", requestId), 500);
+    }
+    const supabase = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
     const organization = await defaultOrganization(supabase);
     const filters = cleanFilters(body.filters, organization.id);
     if (typeof body.assetId === "string") {

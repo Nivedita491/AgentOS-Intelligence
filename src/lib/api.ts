@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { assertSupabaseConfigured, supabase } from './supabase';
 import type {
   Asset,
   Doc,
@@ -38,10 +38,13 @@ import {
   ForgeAIResponseSchema,
 } from '@/shared/validation';
 
-const EDGE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/forge-ai`;
-const INGEST_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/rag-ingest`;
 const DOCUMENT_BUCKET = 'organizational-documents';
 const DEFAULT_ORGANIZATION_SLUG = 'default';
+
+function edgeUrl(functionName: 'forge-ai' | 'rag-ingest'): string {
+  assertSupabaseConfigured();
+  return `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/${functionName}`;
+}
 
 // ---------- Assets ----------
 export async function fetchAssets(): Promise<Asset[]> {
@@ -327,17 +330,17 @@ async function invokeEdge<T>(
 }
 
 async function invokeRagIngest<T>(body: Record<string, unknown>, responseSchema?: z.ZodTypeAny): Promise<T> {
-  return invokeEdge<T>(INGEST_URL, body, 'Ingestion', responseSchema);
+  return invokeEdge<T>(edgeUrl('rag-ingest'), body, 'Ingestion', responseSchema);
 }
 
 export async function reindexDocument(documentId: string): Promise<void> {
   const actionRequest = assertRequest({ action: 'reindex', documentId }, DocumentActionSchema);
-  await invokeRagIngest<DocumentActionResponse>(actionRequest, DocumentActionResponseSchema);
+  await invokeRagIngest<{ documentId: string }>(actionRequest, DocumentActionResponseSchema);
 }
 
 export async function deleteDocument(documentId: string): Promise<void> {
   const actionRequest = assertRequest({ action: 'delete', documentId }, DocumentActionSchema);
-  await invokeRagIngest<DocumentActionResponse>(actionRequest, DocumentActionResponseSchema);
+  await invokeRagIngest<{ documentId: string }>(actionRequest, DocumentActionResponseSchema);
 }
 
 // ---------- Maintenance / Incidents / Inspections ----------
@@ -437,7 +440,7 @@ export async function copilotQuery(
 ): Promise<{ answer: AnswerPayload; sources: CitationSource[]; fallback: boolean }> {
   const requestBody = { query, assetId, mode: 'generate' as const };
   assertRequest(requestBody, CopilotQuerySchema);
-  const payload = await invokeEdge<{ answer: AnswerPayload }>(EDGE_URL, requestBody, 'Copilot', ForgeAIResponseSchema);
+  const payload = await invokeEdge<{ answer: AnswerPayload }>(edgeUrl('forge-ai'), requestBody, 'Copilot', ForgeAIResponseSchema);
   if (!payload.answer) throw new Error('Invalid AI response');
   return {
     answer: payload.answer,
@@ -452,7 +455,7 @@ export async function ragSearch(
 ): Promise<RetrievalDebug> {
   const requestBody = { query, filters, mode: 'search' as const };
   assertRequest(requestBody, CopilotQuerySchema);
-  const payload = await invokeEdge<{ retrieval: unknown }>(EDGE_URL, requestBody, 'RAG Search', ForgeAIResponseSchema);
+  const payload = await invokeEdge<{ retrieval: unknown }>(edgeUrl('forge-ai'), requestBody, 'RAG Search', ForgeAIResponseSchema);
   if (!payload.retrieval || typeof payload.retrieval !== 'object') {
     throw new Error(`RAG search service error: invalid response`);
   }
