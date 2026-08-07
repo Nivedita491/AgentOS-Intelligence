@@ -38,3 +38,6 @@ Thumbs.db
 coverage/
 *.tsbuildinfo
 
+# Internal editor / AI tooling config
+.bolt/
+
