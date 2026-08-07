@@ -27,7 +27,7 @@ export function TopBar() {
 
   const title =
     titles[location.pathname] ??
-    (location.pathname.startsWith('/assets/') ? 'Asset 360' : location.pathname.startsWith('/documents/') ? 'Document Details' : 'ForgeMind AI');
+(location.pathname.startsWith('/assets/') ? 'Asset 360' : location.pathname.startsWith('/documents/') ? 'Document Details' : 'AgentOS Intelligence');
 
   useEffect(() => {
     setOpen(false);

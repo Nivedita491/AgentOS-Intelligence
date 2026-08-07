@@ -42,8 +42,8 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           <Flame className="h-5 w-5 text-white" />
         </div>
         <div className="flex flex-col leading-tight">
-          <span className="text-sm font-semibold text-white tracking-tight">ForgeMind AI</span>
-          <span className="text-[10px] text-slate-400">Organizational Knowledge</span>
+<span className="text-sm font-semibold text-white tracking-tight">AgentOS</span>
+          <span className="text-[10px] text-slate-400">Organizational Intelligence</span>
         </div>
       </div>
 
