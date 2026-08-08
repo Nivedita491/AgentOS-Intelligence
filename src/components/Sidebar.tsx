@@ -14,6 +14,7 @@ import {
   Flame,
   ClipboardCheck,
   PencilRuler,
+  History,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -23,6 +24,7 @@ const navItems = [
   { to: '/documents', label: 'Documents', icon: FileText },
   { to: '/rag-search', label: 'RAG Search', icon: SearchCheck },
   { to: '/memory', label: 'Memory', icon: BrainCircuit },
+  { to: '/activity-history', label: 'Activity History', icon: History },
   { to: '/drawings', label: 'Engineering Drawings', icon: PencilRuler },
   { to: '/copilot', label: 'AI Copilot', icon: Bot },
   { to: '/maintenance', label: 'Maintenance Intelligence', icon: Wrench },

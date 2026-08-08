@@ -9,6 +9,7 @@ import {
   Clock,
   ArrowRight,
   TrendingUp,
+  Activity,
 } from 'lucide-react';
 import {
   BarChart,
@@ -23,7 +24,8 @@ import {
   Legend,
 } from 'recharts';
 import { fetchAssets, fetchDocuments, fetchAlerts, fetchAIQueries, fetchComplianceFindings } from '@/lib/api';
-import type { Asset, Doc, Alert, AIQuery, ComplianceFinding } from '@/types';
+import { getRecentActivity } from '@/lib/activity';
+import type { Asset, Doc, Alert, AIQuery, ComplianceFinding, ActivityEvent } from '@/types';
 import { MetricCard, PageHeader, Card, LoadingCard, ErrorState } from '@/components/ui-primitives';
 import { StatusBadge } from '@/components/StatusBadge';
 import { formatDate, timeAgo, cn, healthColor } from '@/lib/utils';
@@ -35,6 +37,7 @@ export function Dashboard() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [queries, setQueries] = useState<AIQuery[]>([]);
   const [findings, setFindings] = useState<ComplianceFinding[]>([]);
+  const [recentActivity, setRecentActivity] = useState<ActivityEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,18 +45,20 @@ export function Dashboard() {
     setLoading(true);
     setError(null);
     try {
-      const [a, d, al, q, f] = await Promise.all([
+      const [a, d, al, q, f, activity] = await Promise.all([
         fetchAssets(),
         fetchDocuments(),
         fetchAlerts(),
         fetchAIQueries(6),
         fetchComplianceFindings(),
+        getRecentActivity(6).catch(() => []),
       ]);
       setAssets(a);
       setDocs(d);
       setAlerts(al);
       setQueries(q);
       setFindings(f);
+      setRecentActivity(activity);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load dashboard data');
     } finally {
@@ -261,6 +266,18 @@ export function Dashboard() {
           </div>
         </Card>
       </div>
+
+      <Card title="Recent Activity" className="mb-4" action={<Link to="/activity-history" className="text-[11px] text-blue-600 hover:underline">View all activity</Link>}>
+        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+          {recentActivity.slice(0, 6).map((event) => (
+            <Link key={event.id} to="/activity-history" className="flex items-start gap-2.5 rounded-md border border-slate-100 bg-slate-50/50 p-2.5 transition-colors hover:bg-slate-50">
+              <Activity className={`mt-0.5 h-4 w-4 shrink-0 ${event.status === 'failed' ? 'text-red-500' : event.status === 'warning' ? 'text-amber-500' : 'text-emerald-500'}`} />
+              <div className="min-w-0"><p className="truncate text-[12px] font-medium text-slate-700">{event.title}</p><p className="truncate text-[11px] text-slate-400">{typeof event.metadata.documentName === 'string' ? event.metadata.documentName : event.category} · {timeAgo(event.created_at)}</p></div>
+            </Link>
+          ))}
+          {recentActivity.length === 0 && <p className="py-2 text-[12px] text-slate-400">No activity has been recorded yet.</p>}
+        </div>
+      </Card>
 
       {/* High-Risk Assets Table */}
       <Card title="High-Risk Assets" className="mb-4">

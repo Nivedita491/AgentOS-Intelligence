@@ -5,6 +5,7 @@ import { createEmbeddingProvider, toPgVector } from "../_shared/rag/embeddingSer
 import { buildGraphForDocument } from "../_shared/rag/graphService.ts";
 import { bytesFromArrayBuffer, inferSourceType, parseUploadedDocument, semanticChunk } from "../_shared/rag/ingestion.ts";
 import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL } from "../_shared/rag/types.ts";
+import { recordActivity } from "../_shared/activity.ts";
 import { validateRequest, generateRequestId, badRequest, internalError, unsupportedFormat, documentTooLarge, logFailure, logSuccess } from "../_shared/validation/index.ts";
 import { RagIngestCreateSchema, RagIngestActionSchema } from "../_shared/validation/index.ts";
 
@@ -121,8 +122,15 @@ async function resolveEmbeddings(
   return cache;
 }
 
-async function processDocument(supabase: Supabase, organizationId: string, documentId: string) {
+async function processDocument(
+  supabase: Supabase,
+  organizationId: string,
+  documentId: string,
+  requestId: string,
+  action: "process" | "reindex",
+) {
   let activeStage: ProcessingStage = "extracting";
+  const startedAt = Date.now();
   try {
     const { data: document, error: documentError } = await supabase
       .from("documents")
@@ -133,6 +141,12 @@ async function processDocument(supabase: Supabase, organizationId: string, docum
     if (documentError) throw documentError;
     if (!document.storage_path) throw new Error("This document has no storage object. Upload it again before indexing.");
 
+    await recordActivity(supabase, {
+      organizationId, requestId, documentId, activityType: "DOCUMENT_PROCESSING_STARTED", category: "documents", status: "running",
+      title: action === "reindex" ? "Document reindex started" : "Document indexing started",
+      description: document.original_name,
+      metadata: { documentName: document.original_name, mimeType: document.mime_type ?? null, action },
+    });
     await clearDocumentIndex(supabase, organizationId, documentId);
     const { error: pruneError } = await supabase.rpc("prune_orphan_graph_records", { p_organization_id: organizationId });
     if (pruneError) throw pruneError;
@@ -156,6 +170,11 @@ async function processDocument(supabase: Supabase, organizationId: string, docum
     activeStage = "embedding";
     await updateStage(supabase, documentId, "embedding");
     const embeddings = await resolveEmbeddings(supabase, organizationId, chunks);
+    await recordActivity(supabase, {
+      organizationId, requestId, documentId, activityType: "EMBEDDING_GENERATION_COMPLETED", category: "documents", status: "success",
+      title: "Embeddings generated", description: document.original_name,
+      metadata: { documentName: document.original_name, chunkCount: chunks.length, model: EMBEDDING_MODEL, dimensions: EMBEDDING_DIMENSIONS },
+    });
     const rows = chunks.map((chunk) => ({
       organization_id: organizationId,
       document_id: documentId,
@@ -181,12 +200,19 @@ async function processDocument(supabase: Supabase, organizationId: string, docum
 
     activeStage = "graph_building";
     await updateStage(supabase, documentId, "graph_building");
+    const graphStartedAt = Date.now();
     const graph = await buildGraphForDocument(
       supabase,
       organizationId,
       { id: documentId, original_name: document.original_name },
       chunks.map((chunk) => ({ ...chunk, id: chunkIds.get(chunk.chunkIndex)! })),
     );
+    await recordActivity(supabase, {
+      organizationId, requestId, documentId, activityType: "GRAPH_EXTRACTION_COMPLETED", category: "graph",
+      status: graph.warnings.length ? "warning" : "success", title: "Knowledge graph extraction completed", description: document.original_name,
+      durationMs: Date.now() - graphStartedAt,
+      metadata: { documentName: document.original_name, entityCount: graph.entities.length, relationshipCount: graph.relationshipCount, warningCount: graph.warnings.length },
+    });
     await updateStage(supabase, documentId, "ready", {
       metadata_json: {
         ...(document.metadata_json ?? {}),
@@ -202,6 +228,12 @@ async function processDocument(supabase: Supabase, organizationId: string, docum
           completedAt: new Date().toISOString(),
         },
       },
+    });
+    await recordActivity(supabase, {
+      organizationId, requestId, documentId, activityType: action === "reindex" ? "DOCUMENT_REINDEXED" : "DOCUMENT_INDEXED", category: "documents", status: "success",
+      title: action === "reindex" ? "Document reindexed" : "Document indexed", description: document.original_name,
+      durationMs: Date.now() - startedAt,
+      metadata: { documentName: document.original_name, mimeType: document.mime_type ?? null, chunkCount: chunks.length, entityCount: graph.entities.length, relationshipCount: graph.relationshipCount },
     });
     return { documentId, status: "Ready", chunkCount: chunks.length, graph };
   } catch (error) {
@@ -220,6 +252,9 @@ Deno.serve(async (request) => {
   const requestId = generateRequestId();
   const endpoint = "rag-ingest";
   const context = { requestId, endpoint };
+  let activitySupabase: Supabase | null = null;
+  let activityOrganizationId: string | null = null;
+  let activityDocumentId: string | null = null;
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -227,6 +262,7 @@ Deno.serve(async (request) => {
       return json(internalError("Server configuration is missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.", requestId), 500);
     }
     const supabase = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+    activitySupabase = supabase;
     const rawBody = await request.json();
     const action = rawBody && typeof rawBody === "object" ? (rawBody as Record<string, unknown>).action : undefined;
 
@@ -243,6 +279,7 @@ Deno.serve(async (request) => {
       }
       const body = parsed.data;
       const organization = await getDefaultOrganization(supabase);
+      activityOrganizationId = organization.id;
       if (!body.storagePath.startsWith(`${organization.slug}/documents/`)) {
         logFailure(context, { operation: "create", code: "VALIDATION_ERROR", message: "Invalid document storage path.", latencyMs: Date.now() - startedAt });
         return json(badRequest("Invalid document storage path.", undefined, requestId), 400);
@@ -263,6 +300,13 @@ Deno.serve(async (request) => {
         processing_stage: "uploaded",
       }).select().single();
       if (error) throw error;
+      activityDocumentId = data.id;
+      await recordActivity(supabase, {
+        organizationId: organization.id, requestId, documentId: data.id, activityType: "DOCUMENT_UPLOADED", category: "documents", status: "success",
+        title: "Document uploaded", description: data.original_name,
+        durationMs: Date.now() - startedAt,
+        metadata: { documentName: data.original_name, mimeType: data.mime_type, fileSize: data.file_size, documentType: data.document_type },
+      });
       logSuccess(context, Date.now() - startedAt, { operation: "create", documentId: data.id });
       return json({ success: true, requestId, document: data });
     }
@@ -275,22 +319,30 @@ Deno.serve(async (request) => {
     }
     const actionBody = parsedAction.data;
     const organization = await getDefaultOrganization(supabase);
+    activityOrganizationId = organization.id;
     const documentId = actionBody.documentId;
+    activityDocumentId = documentId;
     if (actionBody.action === "process" || actionBody.action === "reindex") {
-      const result = await processDocument(supabase, organization.id, documentId);
+      const result = await processDocument(supabase, organization.id, documentId, requestId, actionBody.action);
       logSuccess(context, Date.now() - startedAt, { operation: actionBody.action, documentId });
       return json({ success: true, requestId, ...result });
     }
     if (actionBody.action === "delete") {
-      const { data: document, error: findError } = await supabase.from("documents").select("storage_path").eq("id", documentId).eq("organization_id", organization.id).single();
+      const { data: document, error: findError } = await supabase.from("documents").select("storage_path, original_name, mime_type").eq("id", documentId).eq("organization_id", organization.id).single();
       if (findError) throw findError;
       await clearDocumentIndex(supabase, organization.id, documentId);
-      const { error: deleteError } = await supabase.from("documents").delete().eq("id", documentId).eq("organization_id", organization.id);
-      if (deleteError) throw deleteError;
       if (document.storage_path) {
         const { error: storageError } = await supabase.storage.from(BUCKET).remove([document.storage_path]);
-        if (storageError) throw new Error(`Document row was deleted but storage cleanup failed: ${storageError.message}`);
+        if (storageError) throw new Error(`Storage cleanup failed: ${storageError.message}`);
       }
+      await recordActivity(supabase, {
+        organizationId: organization.id, requestId, documentId, activityType: "DOCUMENT_DELETED", category: "documents", status: "success",
+        title: "Document deleted", description: document.original_name,
+        durationMs: Date.now() - startedAt,
+        metadata: { documentName: document.original_name, mimeType: document.mime_type ?? null, storageCleanup: Boolean(document.storage_path) },
+      });
+      const { error: deleteError } = await supabase.from("documents").delete().eq("id", documentId).eq("organization_id", organization.id);
+      if (deleteError) throw deleteError;
       await supabase.rpc("prune_orphan_graph_records", { p_organization_id: organization.id });
       logSuccess(context, Date.now() - startedAt, { operation: "delete", documentId });
       return json({ success: true, requestId, documentId });
@@ -298,6 +350,13 @@ Deno.serve(async (request) => {
     return json(badRequest("Unknown ingestion action.", undefined, requestId), 400);
   } catch (error) {
     console.error("rag-ingest", error);
+    if (activitySupabase && activityOrganizationId) {
+      await recordActivity(activitySupabase, {
+        organizationId: activityOrganizationId, requestId, documentId: activityDocumentId, activityType: "ERROR_OCCURRED", category: "system", status: "failed",
+        title: "Document ingestion failed", description: "The document action did not complete. See the request ID for the correlated server error.",
+        durationMs: Date.now() - startedAt, metadata: { endpoint, documentId: activityDocumentId }, errorCode: "INGESTION_FAILED",
+      });
+    }
     logFailure(context, { operation: "unknown", code: "INTERNAL_ERROR", latencyMs: Date.now() - startedAt });
     return json(internalError(publicMessage(error), requestId), 500);
   }

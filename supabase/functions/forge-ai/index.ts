@@ -3,6 +3,7 @@ import { createClient } from "npm:@supabase/supabase-js@2.58.0";
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2.58.0";
 import { hybridRetrieve } from "../_shared/rag/hybridRetriever.ts";
 import type { RetrievalCandidate, RetrievalFilters } from "../_shared/rag/types.ts";
+import { recordActivity } from "../_shared/activity.ts";
 import { validateRequest, generateRequestId, badRequest, internalError, logFailure, logSuccess } from "../_shared/validation/index.ts";
 import { ForgeAIRequestSchema } from "../_shared/validation/index.ts";
 
@@ -204,6 +205,9 @@ Deno.serve(async (request) => {
   const requestId = generateRequestId();
   const endpoint = "forge-ai";
   const context = { requestId, endpoint };
+  let activitySupabase: Supabase | null = null;
+  let activityOrganizationId: string | null = null;
+  let activityQuery: string | null = null;
   try {
     const rawBody = await request.json();
     const parsed = validateRequest(rawBody, ForgeAIRequestSchema, requestId);
@@ -213,20 +217,44 @@ Deno.serve(async (request) => {
     }
     const body = parsed.data;
     const query = body.query.trim();
+    activityQuery = query;
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     if (!supabaseUrl || !serviceRoleKey) {
       return json(internalError("Server configuration is missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.", requestId), 500);
     }
     const supabase = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+    activitySupabase = supabase;
     const organization = await defaultOrganization(supabase);
+    activityOrganizationId = organization.id;
     const filters = cleanFilters(body.filters, organization.id);
     if (typeof body.assetId === "string") {
       const { data: linkedDocuments } = await supabase.from("documents").select("id").eq("organization_id", organization.id).eq("linked_asset_id", body.assetId);
       filters.documentIds = [...new Set([...(filters.documentIds ?? []), ...(linkedDocuments ?? []).map((document: { id: string }) => document.id)])];
     }
+    await recordActivity(supabase, {
+      organizationId: organization.id, requestId, activityType: "RAG_QUERY_STARTED", category: "rag", status: "running",
+      title: "RAG query started", description: query, metadata: { mode: body.mode, assetId: body.assetId ?? null },
+    });
     const retrieval = await hybridRetrieve(supabase, query, filters);
+    const retrievalMetadata = {
+      query,
+      vectorCandidates: retrieval.debug.vectorResults.length,
+      lexicalCandidates: retrieval.debug.lexicalResults.length,
+      metadataCandidates: retrieval.debug.metadataResults.length,
+      graphCandidates: retrieval.debug.graphResults.length,
+      finalEvidence: retrieval.evidence.length,
+      citationCount: retrieval.citations.length,
+    };
+    await recordActivity(supabase, {
+      organizationId: organization.id, requestId, activityType: "RETRIEVAL_COMPLETED", category: "rag", status: "success",
+      title: "Evidence retrieval completed", description: query, durationMs: Date.now() - startedAt, metadata: retrievalMetadata,
+    });
     if (body.mode === "search") {
+      await recordActivity(supabase, {
+        organizationId: organization.id, requestId, activityType: "RAG_QUERY_COMPLETED", category: "rag", status: "success",
+        title: "RAG query completed", description: query, durationMs: Date.now() - startedAt, metadata: retrievalMetadata,
+      });
       logSuccess(context, Date.now() - startedAt, { mode: "search", evidence: retrieval.evidence.length });
       return json({ success: true, requestId, retrieval });
     }
@@ -245,6 +273,21 @@ Deno.serve(async (request) => {
     const taskId = crypto.randomUUID();
     const executionId = crypto.randomUUID();
     await recordMemory(supabase, organization.id, taskId, executionId, query, answer, retrieval, Date.now() - startedAt);
+    await recordActivity(supabase, {
+      organizationId: organization.id, requestId, taskId, activityType: "MEMORY_WRITTEN", category: "memory", status: "success",
+      title: "Shared memory written", description: query, durationMs: Date.now() - startedAt,
+      metadata: { executionId, retrievedChunkCount: retrieval.evidence.length, discoveredEntityCount: retrieval.discoveredEntities.length },
+    });
+    await recordActivity(supabase, {
+      organizationId: organization.id, requestId, taskId, activityType: "COPILOT_RESPONSE_GENERATED", category: "ai", status: generated ? "success" : "warning",
+      title: generated ? "Grounded Copilot response generated" : "Evidence-only Copilot response generated", description: query,
+      durationMs: Date.now() - startedAt,
+      metadata: { citationCount: retrieval.citations.length, provider: generated ? "gemini-2.0-flash" : "evidence-only", finalEvidence: retrieval.evidence.length },
+    });
+    await recordActivity(supabase, {
+      organizationId: organization.id, requestId, taskId, activityType: "RAG_QUERY_COMPLETED", category: "rag", status: "success",
+      title: "RAG query completed", description: query, durationMs: Date.now() - startedAt, metadata: retrievalMetadata,
+    });
     const agentTrace = [
       { agent: "Query Analysis", role: "retrieval planning", action: `Intent: ${classifyIntent(query)}; queries: ${retrieval.debug.rewrittenQueries.length}`, evidenceCount: 0, status: "completed" },
       { agent: "Hybrid Retriever", role: "vector + lexical + metadata + graph", action: `RRF fused ${retrieval.debug.fusionResults.length} candidates and reranked ${retrieval.evidence.length}`, evidenceCount: retrieval.evidence.length, status: "completed" },
@@ -273,6 +316,18 @@ Deno.serve(async (request) => {
     });
   } catch (error) {
     console.error("forge-ai", error);
+    if (activitySupabase && activityOrganizationId && activityQuery) {
+      await recordActivity(activitySupabase, {
+        organizationId: activityOrganizationId, requestId, activityType: "RAG_QUERY_FAILED", category: "rag", status: "failed",
+        title: "RAG query failed", description: activityQuery, durationMs: Date.now() - startedAt,
+        metadata: { endpoint }, errorCode: "RAG_QUERY_FAILED",
+      });
+      await recordActivity(activitySupabase, {
+        organizationId: activityOrganizationId, requestId, activityType: "ERROR_OCCURRED", category: "system", status: "failed",
+        title: "RAG request error", description: "The RAG request did not complete. See the request ID for the correlated server error.",
+        durationMs: Date.now() - startedAt, metadata: { endpoint }, errorCode: "RAG_QUERY_FAILED",
+      });
+    }
     logFailure(context, { code: "INTERNAL_ERROR", latencyMs: Date.now() - startedAt });
     const err = internalError(message(error), requestId);
     return json(err, 500);

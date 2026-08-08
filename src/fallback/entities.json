@@ -1,0 +1,92 @@
+[
+  {
+    "id": "entity-1",
+    "entity_type": "Organization",
+    "name": "NovaTech Labs",
+    "normalized_name": "novatech labs",
+    "ontology_class": "Organization",
+    "metadata_json": { "headquarters": "Bengaluru" },
+    "created_at": "2026-08-07T08:00:00Z"
+  },
+  {
+    "id": "entity-2",
+    "entity_type": "Product",
+    "name": "AgentOS Intelligence",
+    "normalized_name": "agentos intelligence",
+    "ontology_class": "Product",
+    "metadata_json": { "category": "AI Platform" },
+    "created_at": "2026-08-07T08:00:00Z"
+  },
+  {
+    "id": "entity-3",
+    "entity_type": "Project",
+    "name": "Project Aurora",
+    "normalized_name": "project aurora",
+    "ontology_class": "Campaign",
+    "metadata_json": { "channel": "LinkedIn" },
+    "created_at": "2026-08-07T09:00:00Z"
+  },
+  {
+    "id": "entity-4",
+    "entity_type": "Person",
+    "name": "Priya Sharma",
+    "normalized_name": "priya sharma",
+    "ontology_class": "Person",
+    "metadata_json": { "role": "Campaign Manager" },
+    "created_at": "2026-08-07T09:00:00Z"
+  },
+  {
+    "id": "entity-5",
+    "entity_type": "Team",
+    "name": "AI Platform Team",
+    "normalized_name": "ai platform team",
+    "ontology_class": "Team",
+    "metadata_json": { "function": "Platform Development" },
+    "created_at": "2026-08-07T08:30:00Z"
+  },
+  {
+    "id": "entity-6",
+    "entity_type": "Audience",
+    "name": "Enterprise CTOs",
+    "normalized_name": "enterprise ctos",
+    "ontology_class": "Audience",
+    "metadata_json": { "segment": "Enterprise" },
+    "created_at": "2026-08-07T09:00:00Z"
+  },
+  {
+    "id": "entity-7",
+    "entity_type": "Technology",
+    "name": "PostgreSQL",
+    "normalized_name": "postgresql",
+    "ontology_class": "Technology",
+    "metadata_json": { "category": "Database" },
+    "created_at": "2026-08-07T08:00:00Z"
+  },
+  {
+    "id": "entity-8",
+    "entity_type": "Technology",
+    "name": "pgvector",
+    "normalized_name": "pgvector",
+    "ontology_class": "Technology",
+    "metadata_json": { "category": "Vector Search" },
+    "created_at": "2026-08-07T08:00:00Z"
+  },
+  {
+    "id": "entity-9",
+    "entity_type": "Technology",
+    "name": "Supabase",
+    "normalized_name": "supabase",
+    "ontology_class": "Technology",
+    "metadata_json": { "category": "Database Service" },
+    "created_at": "2026-08-07T08:00:00Z"
+  },
+  {
+    "id": "entity-10",
+    "entity_type": "Technology",
+    "name": "Gemini",
+    "normalized_name": "gemini",
+    "ontology_class": "Technology",
+    "metadata_json": { "category": "AI Model" },
+    "created_at": "2026-08-07T08:00:00Z"
+  }
+]

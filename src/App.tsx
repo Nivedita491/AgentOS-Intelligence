@@ -16,6 +16,7 @@ import { Settings } from '@/pages/Settings';
 import { QMS } from '@/pages/QMS';
 import { RagSearch } from '@/pages/RagSearch';
 import { Memory } from '@/pages/Memory';
+import { ActivityHistory } from '@/pages/ActivityHistory';
 
 export default function App() {
   return (
@@ -38,6 +39,7 @@ export default function App() {
               <Route path="/copilot" element={<Copilot />} />
               <Route path="/rag-search" element={<RagSearch />} />
               <Route path="/memory" element={<Memory />} />
+              <Route path="/activity-history" element={<ActivityHistory />} />
               <Route path="/maintenance" element={<Maintenance />} />
               <Route path="/compliance" element={<Compliance />} />
               <Route path="/qms" element={<QMS />} />

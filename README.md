@@ -220,6 +220,7 @@ Future specialized agents will use this memory layer through shared retrieval se
 - Episodic memory
 - Semantic memory
 - Graph memory
+- Persistent Activity History — organization-scoped audit-style timeline for document, RAG, graph, memory and AI actions, linked through request IDs.
 - Reindex / delete foundation
 - Retrieval diagnostics / debug data (RAG Search panel)
 - React/TypeScript frontend

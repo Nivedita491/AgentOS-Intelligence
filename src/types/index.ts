@@ -313,6 +313,85 @@ export interface EpisodicMemoryRecord {
   created_at: string;
 }
 
+// ============ Activity history ============
+export type ActivityType =
+  | 'DOCUMENT_UPLOADED'
+  | 'DOCUMENT_PROCESSING_STARTED'
+  | 'EMBEDDING_GENERATION_COMPLETED'
+  | 'DOCUMENT_INDEXED'
+  | 'DOCUMENT_REINDEXED'
+  | 'DOCUMENT_DELETED'
+  | 'RAG_QUERY_STARTED'
+  | 'RAG_QUERY_COMPLETED'
+  | 'RAG_QUERY_FAILED'
+  | 'RETRIEVAL_COMPLETED'
+  | 'COPILOT_RESPONSE_GENERATED'
+  | 'GRAPH_EXTRACTION_COMPLETED'
+  | 'MEMORY_WRITTEN'
+  | 'SETTINGS_UPDATED'
+  | 'ERROR_OCCURRED'
+  | 'AGENT_STARTED'
+  | 'AGENT_COMPLETED'
+  | 'AGENT_FAILED'
+  | 'JOB_STARTED'
+  | 'JOB_COMPLETED'
+  | 'JOB_FAILED';
+
+export type ActivityCategory = 'documents' | 'rag' | 'ai' | 'graph' | 'memory' | 'system' | 'agents';
+export type ActivityStatus = 'success' | 'failed' | 'running' | 'warning';
+
+export interface ActivityEvent {
+  id: string;
+  organization_id: string;
+  user_id: string | null;
+  request_id: string | null;
+  activity_type: ActivityType;
+  category: ActivityCategory;
+  status: ActivityStatus;
+  title: string;
+  description: string | null;
+  entity_type: string | null;
+  entity_id: string | null;
+  document_id: string | null;
+  task_id: string | null;
+  agent_name: string | null;
+  duration_ms: number | null;
+  metadata: Record<string, unknown>;
+  error_code: string | null;
+  created_at: string;
+}
+
+export interface CreateActivityEvent {
+  organizationId: string;
+  userId?: string | null;
+  requestId?: string | null;
+  activityType: ActivityType;
+  category: ActivityCategory;
+  status: ActivityStatus;
+  title: string;
+  description?: string | null;
+  entityType?: string | null;
+  entityId?: string | null;
+  documentId?: string | null;
+  taskId?: string | null;
+  agentName?: string | null;
+  durationMs?: number | null;
+  metadata?: Record<string, unknown>;
+  errorCode?: string | null;
+}
+
+export interface ActivityHistoryQuery {
+  organizationId?: string;
+  activityType?: ActivityType;
+  category?: ActivityCategory;
+  status?: ActivityStatus;
+  search?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  limit?: number;
+  offset?: number;
+}
+
 export interface AnswerPayload {
   directAnswer: string;
   keyFindings: Finding[];

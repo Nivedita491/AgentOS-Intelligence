@@ -1,0 +1,67 @@
+{
+  "working": [
+    {
+      "id": "wrk-1",
+      "task_id": "task-1",
+      "organization_id": "org-1",
+      "original_query": "What is Project Aurora?",
+      "rewritten_queries": ["What is Project Aurora?"],
+      "retrieved_chunk_ids": ["chunk-4"],
+      "discovered_entities": ["Project Aurora", "Priya Sharma"],
+      "current_plan": ["search knowledge", "generate answer"],
+      "intermediate_outputs": {},
+      "current_status": "Completed",
+      "created_at": "2026-08-07T09:10:00Z",
+      "updated_at": "2026-08-07T09:15:00Z",
+      "expires_at": null
+    }
+  ],
+  "episodic": [
+    {
+      "id": "episodic-1",
+      "execution_id": "exec-1",
+      "task_id": "task-1",
+      "organization_id": "org-1",
+      "query": "What is Project Aurora?",
+      "agents_used": ["retriever", "answerGenerator"],
+      "retrieved_evidence": [
+        {
+          "documentId": "doc-2",
+          "documentName": "Launch Meeting Notes",
+          "chunkId": "chunk-4",
+          "page": 1,
+          "section": "Campaign Overview",
+          "excerpt": "Project Aurora is the LinkedIn launch campaign for AgentOS Intelligence. Priya Sharma manages Project Aurora.",
+          "sourceType": "fallback"
+        }
+      ],
+      "final_output": {
+        "directAnswer": "Project Aurora is the LinkedIn launch campaign for AgentOS Intelligence.",
+        "keyFindings": [
+          { "finding": "Project Aurora is the LinkedIn launch campaign for AgentOS Intelligence.", "evidenceIds": ["chunk-4"] }
+        ],
+        "probableCauses": [
+          { "cause": "The launch campaign is described in the meeting notes.", "confidence": "high", "evidenceIds": ["chunk-4"] }
+        ],
+        "recommendedActions": ["Review the campaign briefing before live execution."],
+        "riskNote": "Fallback response is based on available local knowledge.",
+        "sources": [
+          {
+            "documentId": "doc-2",
+            "documentName": "Launch Meeting Notes",
+            "chunkId": "chunk-4",
+            "page": 1,
+            "section": "Campaign Overview",
+            "excerpt": "Project Aurora is the LinkedIn launch campaign for AgentOS Intelligence. Priya Sharma manages Project Aurora.",
+            "sourceType": "fallback"
+          }
+        ],
+        "confidence": { "level": "high", "score": 92, "basis": "Bundled local fallback knowledge" }
+      },
+      "success": true,
+      "confidence": 92,
+      "latency_ms": 78,
+      "created_at": "2026-08-07T09:15:00Z"
+    }
+  ]
+}

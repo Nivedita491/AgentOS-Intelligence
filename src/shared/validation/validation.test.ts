@@ -33,8 +33,11 @@ import {
   JobCreationSchema,
   HistoryQuerySchema,
   UserActionSchema,
+  CreateActivityEventSchema,
+  ActivityHistoryQuerySchema,
 } from './schemas/requestSchemas';
 import { ApiErrorResponseSchema, ForgeAIResponseSchema, GenericSuccessSchema } from './schemas/responseSchemas';
+import { serializeActivityMetadata } from '@/lib/activity';
 
 const UUID = '00000000-0000-4000-8000-000000000000';
 
@@ -261,6 +264,48 @@ describe('User Action validation', () => {
       UserActionSchema,
     );
     expect(result.success).toBe(false);
+  });
+});
+
+describe('Persistent Activity History validation', () => {
+  const activity = {
+    organizationId: UUID,
+    requestId: 'req_activity_123',
+    activityType: 'DOCUMENT_INDEXED',
+    category: 'documents',
+    status: 'success',
+    title: 'Document indexed',
+    documentId: UUID,
+    metadata: { documentName: 'AgentOS Overview.md', chunkCount: 4 },
+  };
+
+  it('accepts a valid activity event', () => {
+    const result = parseRequest(activity, CreateActivityEventSchema);
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an invalid activity type', () => {
+    const result = parseRequest({ ...activity, activityType: 'UNKNOWN_EVENT' }, CreateActivityEventSchema);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an invalid activity status', () => {
+    const result = parseRequest({ ...activity, status: 'pending' }, CreateActivityEventSchema);
+    expect(result.success).toBe(false);
+  });
+
+  it('validates history query filters and search input', () => {
+    const result = parseRequest({ category: 'rag', status: 'success', search: 'req_activity_123', limit: 25, offset: 0 }, ActivityHistoryQuerySchema);
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an inverted activity date range', () => {
+    const result = parseRequest({ dateFrom: '2026-08-08T00:00:00.000Z', dateTo: '2026-08-07T00:00:00.000Z' }, ActivityHistoryQuerySchema);
+    expect(result.success).toBe(false);
+  });
+
+  it('serializes activity metadata safely', () => {
+    expect(serializeActivityMetadata({ chunks: 6, nested: { source: 'document' } })).toEqual({ chunks: 6, nested: { source: 'document' } });
   });
 });
 

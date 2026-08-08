@@ -1,0 +1,82 @@
+[
+  {
+    "id": "chunk-1",
+    "document_id": "doc-1",
+    "chunk_index": 0,
+    "content": "AgentOS Intelligence is developed by NovaTech Labs to provide industrial knowledge intelligence using Hybrid RAG and Knowledge Graphs.",
+    "page_number": 1,
+    "section_name": "Executive Summary",
+    "metadata_json": { "subject": "AgentOS Intelligence", "keywords": ["NovaTech Labs", "Hybrid RAG", "Knowledge Graphs"] },
+    "section_title": "Executive Summary"
+  },
+  {
+    "id": "chunk-2",
+    "document_id": "doc-1",
+    "chunk_index": 1,
+    "content": "The platform integrates PostgreSQL, Supabase, pgvector, and Gemini to deliver a hybrid retrieval experience for operational teams.",
+    "page_number": 2,
+    "section_name": "Architecture",
+    "metadata_json": { "subject": "Architecture", "keywords": ["PostgreSQL", "Supabase", "pgvector", "Gemini"] },
+    "section_title": "Architecture"
+  },
+  {
+    "id": "chunk-3",
+    "document_id": "doc-1",
+    "chunk_index": 2,
+    "content": "AgentOS Intelligence uses concise, professional, and technically credible brand tone to communicate across enterprise operations and marketing teams.",
+    "page_number": 3,
+    "section_name": "Brand Voice",
+    "metadata_json": { "subject": "Tone", "keywords": ["professional", "technically credible", "concise"] },
+    "section_title": "Brand Voice"
+  },
+  {
+    "id": "chunk-4",
+    "document_id": "doc-2",
+    "chunk_index": 0,
+    "content": "Project Aurora is the LinkedIn launch campaign for AgentOS Intelligence. Priya Sharma manages Project Aurora.",
+    "page_number": 1,
+    "section_name": "Campaign Overview",
+    "metadata_json": { "subject": "Project Aurora", "keywords": ["LinkedIn", "Launch", "Priya Sharma"] },
+    "section_title": "Campaign Overview"
+  },
+  {
+    "id": "chunk-5",
+    "document_id": "doc-2",
+    "chunk_index": 1,
+    "content": "The campaign targets enterprise Chief Technology Officers and positions AgentOS Intelligence as an AI-driven operations partner.",
+    "page_number": 2,
+    "section_name": "Target Audience",
+    "metadata_json": { "subject": "Audience", "keywords": ["Enterprise CTOs", "Buyers", "Positioning"] },
+    "section_title": "Target Audience"
+  },
+  {
+    "id": "chunk-6",
+    "document_id": "doc-3",
+    "chunk_index": 0,
+    "content": "The Enterprise plan is priced at INR 24,999 per month, designed for large-scale deployments with premium support and analytics.",
+    "page_number": 1,
+    "section_name": "Pricing Overview",
+    "metadata_json": { "subject": "Enterprise Pricing", "keywords": ["INR 24,999", "Enterprise plan", "support"] },
+    "section_title": "Pricing Overview"
+  },
+  {
+    "id": "chunk-7",
+    "document_id": "doc-4",
+    "chunk_index": 0,
+    "content": "The brand tone directive is professional, technically credible, and concise to support enterprise messaging.",
+    "page_number": 1,
+    "section_name": "Tone Guidelines",
+    "metadata_json": { "subject": "Tone", "keywords": ["professional", "concise", "credible"] },
+    "section_title": "Tone Guidelines"
+  },
+  {
+    "id": "chunk-8",
+    "document_id": "doc-5",
+    "chunk_index": 0,
+    "content": "Enterprise CTOs care about operational reliability, AI-driven decision support, and the ability to tie analytics to existing plant history.",
+    "page_number": 1,
+    "section_name": "CTO Insights",
+    "metadata_json": { "subject": "Customer Research", "keywords": ["Enterprise CTOs", "reliability", "decision support"] },
+    "section_title": "CTO Insights"
+  }
+]

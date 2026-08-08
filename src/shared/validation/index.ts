@@ -37,6 +37,9 @@ export type {
   UserActionRequest,
   CopilotQueryRequest,
   SettingsQueryRequest,
+  CreateActivityEventRequest,
+  ActivityEventResponse,
+  ActivityHistoryQueryRequest,
 } from './schemas/requestSchemas';
 
 export type { ApiErrorResponse } from './schemas/responseSchemas';

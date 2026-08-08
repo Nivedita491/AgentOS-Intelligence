@@ -8,6 +8,14 @@
 import { z } from 'zod';
 import { boundedInt, isoDateSchema, metadataSchema, shortString, stringArray, uuidSchema } from './common';
 
+export const activityTypes = [
+  'DOCUMENT_UPLOADED', 'DOCUMENT_PROCESSING_STARTED', 'EMBEDDING_GENERATION_COMPLETED', 'DOCUMENT_INDEXED', 'DOCUMENT_REINDEXED', 'DOCUMENT_DELETED',
+  'RAG_QUERY_STARTED', 'RAG_QUERY_COMPLETED', 'RAG_QUERY_FAILED', 'RETRIEVAL_COMPLETED', 'COPILOT_RESPONSE_GENERATED', 'GRAPH_EXTRACTION_COMPLETED',
+  'MEMORY_WRITTEN', 'SETTINGS_UPDATED', 'ERROR_OCCURRED', 'AGENT_STARTED', 'AGENT_COMPLETED', 'AGENT_FAILED', 'JOB_STARTED', 'JOB_COMPLETED', 'JOB_FAILED',
+] as const;
+export const activityCategories = ['documents', 'rag', 'ai', 'graph', 'memory', 'system', 'agents'] as const;
+export const activityStatuses = ['success', 'failed', 'running', 'warning'] as const;
+
 // ---------- RAG Query ----------
 export const QuerySchema = z.object({
   query: z.string().min(3).max(8000),
@@ -121,6 +129,50 @@ export const HistoryQuerySchema = z.object({
   intent: z.string().max(120).optional(),
 });
 export type HistoryQueryRequest = z.infer<typeof HistoryQuerySchema>;
+
+// ---------- Persistent Activity History ----------
+export const CreateActivityEventSchema = z.object({
+  organizationId: uuidSchema,
+  userId: uuidSchema.nullable().optional(),
+  requestId: z.string().min(1).max(160).nullable().optional(),
+  activityType: z.enum(activityTypes),
+  category: z.enum(activityCategories),
+  status: z.enum(activityStatuses),
+  title: shortString(240),
+  description: z.string().max(2000).nullable().optional(),
+  entityType: z.string().max(120).nullable().optional(),
+  entityId: z.string().max(255).nullable().optional(),
+  documentId: uuidSchema.nullable().optional(),
+  taskId: z.string().max(160).nullable().optional(),
+  agentName: z.string().max(160).nullable().optional(),
+  durationMs: boundedInt(0, 24 * 60 * 60 * 1000).nullable().optional(),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+  errorCode: z.string().max(120).nullable().optional(),
+});
+export type CreateActivityEventRequest = z.infer<typeof CreateActivityEventSchema>;
+
+export const ActivityEventSchema = CreateActivityEventSchema.extend({
+  id: uuidSchema,
+  createdAt: z.string().datetime({ offset: true }),
+});
+export type ActivityEventResponse = z.infer<typeof ActivityEventSchema>;
+
+export const ActivityHistoryQuerySchema = z.object({
+  organizationId: uuidSchema.optional(),
+  activityType: z.enum(activityTypes).optional(),
+  category: z.enum(activityCategories).optional(),
+  status: z.enum(activityStatuses).optional(),
+  search: z.string().max(200).trim().optional(),
+  dateFrom: isoDateSchema,
+  dateTo: isoDateSchema,
+  limit: boundedInt(1, 100).default(25),
+  offset: boundedInt(0, 10000).default(0),
+}).superRefine((value, context) => {
+  if (value.dateFrom && value.dateTo && value.dateFrom > value.dateTo) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['dateTo'], message: 'dateTo must be on or after dateFrom.' });
+  }
+});
+export type ActivityHistoryQueryRequest = z.infer<typeof ActivityHistoryQuerySchema>;
 
 // ---------- User Actions ----------
 export const UserActionSchema = z.object({
