@@ -17,7 +17,7 @@ function score(value: number | undefined): string {
   return typeof value === 'number' ? value.toFixed(3) : '—';
 }
 
-function ResultTable({ title, rows, mode }: { title: string; rows: RetrievalCandidateDebug[]; mode: 'vector' | 'lexical' | 'metadata' | 'graph' | 'fusion' | 'rerank' }) {
+function ResultTable({ title, rows, mode, local = false }: { title: string; rows: RetrievalCandidateDebug[]; mode: 'vector' | 'lexical' | 'metadata' | 'graph' | 'fusion' | 'rerank'; local?: boolean }) {
   const value = (row: RetrievalCandidateDebug) => {
     if (mode === 'vector') return score(row.semanticScore);
     if (mode === 'lexical') return score(row.lexicalScore);
@@ -36,7 +36,7 @@ function ResultTable({ title, rows, mode }: { title: string; rows: RetrievalCand
         <div className="max-h-72 overflow-auto">
           <table className="w-full text-left text-[11px]">
             <thead className="sticky top-0 bg-slate-50 text-slate-500">
-              <tr><th className="px-3 py-2 font-medium">Evidence</th><th className="px-3 py-2 font-medium">Scores</th><th className="px-3 py-2 font-medium">{mode === 'rerank' ? 'Rerank' : 'Primary'}</th></tr>
+              <tr><th className="px-3 py-2 font-medium">Evidence</th><th className="px-3 py-2 font-medium">{local ? 'Local signal' : 'Scores'}</th><th className="px-3 py-2 font-medium">{local ? 'Relevance' : mode === 'rerank' ? 'Rerank' : 'Primary'}</th></tr>
             </thead>
             <tbody>
               {rows.map((row) => (
@@ -48,9 +48,10 @@ function ResultTable({ title, rows, mode }: { title: string; rows: RetrievalCand
                     {row.traversal?.length ? <p className="mt-1 text-purple-600">Graph path: {row.traversal.join(' → ')}</p> : null}
                   </td>
                   <td className="whitespace-nowrap px-3 py-2 leading-5 text-slate-500">
+                    {local ? <div>Text + metadata + graph</div> : <>
                     <div>V {score(row.semanticScore)} · L {score(row.lexicalScore)}</div>
                     <div>G {score(row.graphScore)} · M {score(row.metadataScore)}</div>
-                    <div>RRF {score(row.fusedScore)}</div>
+                    <div>RRF {score(row.fusedScore)}</div></>}
                   </td>
                   <td className="whitespace-nowrap px-3 py-2 font-mono text-slate-700">{value(row)}</td>
                 </tr>
@@ -70,6 +71,7 @@ export function RagSearch() {
   const [result, setResult] = useState<RetrievalDebug | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<FriendlyError | null>(null);
+  const localResult = result?.embeddingModel === 'local-token-ranking';
 
   const runSearch = async (event?: React.FormEvent) => {
     event?.preventDefault();
@@ -106,7 +108,7 @@ export function RagSearch() {
       {result && (
         <div className="mt-4 space-y-4">
           <div className="grid gap-3 lg:grid-cols-4">
-            <div className="rounded-lg border border-slate-200 bg-white p-3"><Database className="mb-2 h-4 w-4 text-blue-600" /><p className="text-[11px] text-slate-500">Query embedding</p><p className="mt-0.5 text-[13px] font-medium text-slate-700">{result.embeddingCreated ? result.embeddingModel : 'Not created'}</p></div>
+            <div className="rounded-lg border border-slate-200 bg-white p-3"><Database className="mb-2 h-4 w-4 text-blue-600" /><p className="text-[11px] text-slate-500">{localResult ? 'Retrieval method' : 'Query embedding'}</p><p className="mt-0.5 text-[13px] font-medium text-slate-700">{localResult ? 'Local token ranking' : result.embeddingCreated ? result.embeddingModel : 'Not created'}</p></div>
             <div className="rounded-lg border border-slate-200 bg-white p-3"><Filter className="mb-2 h-4 w-4 text-emerald-600" /><p className="text-[11px] text-slate-500">Rewritten queries</p><p className="mt-0.5 text-[13px] font-medium text-slate-700">{result.rewrittenQueries.length}</p></div>
             <div className="rounded-lg border border-slate-200 bg-white p-3"><Network className="mb-2 h-4 w-4 text-purple-600" /><p className="text-[11px] text-slate-500">Graph candidates</p><p className="mt-0.5 text-[13px] font-medium text-slate-700">{result.graphResults.length}</p></div>
             <div className="rounded-lg border border-slate-200 bg-white p-3"><Sparkles className="mb-2 h-4 w-4 text-orange-500" /><p className="text-[11px] text-slate-500">Final evidence</p><p className="mt-0.5 text-[13px] font-medium text-slate-700">{result.finalResults.length}</p></div>
@@ -116,14 +118,15 @@ export function RagSearch() {
             <p className="mt-1"><span className="font-medium">Retrieval queries:</span> {result.rewrittenQueries.join(' · ')}</p>
             {result.warnings.length > 0 && <p className="mt-1 text-amber-700"><span className="font-medium">Warnings:</span> {result.warnings.join(' ')}</p>}
           </div>
-          <div className="grid gap-4 xl:grid-cols-2">
+          {localResult && <ResultTable title="Local evidence ranked by relevance" rows={result.finalResults} mode="rerank" local />}
+          {!localResult && <><div className="grid gap-4 xl:grid-cols-2">
             <ResultTable title="Vector results (cosine similarity)" rows={result.vectorResults} mode="vector" />
             <ResultTable title="Lexical results (PostgreSQL FTS)" rows={result.lexicalResults} mode="lexical" />
             <ResultTable title="Metadata candidates" rows={result.metadataResults} mode="metadata" />
             <ResultTable title="Graph results (1–2 hops)" rows={result.graphResults} mode="graph" />
           </div>
           <ResultTable title="Weighted reciprocal-rank fusion" rows={result.fusionResults} mode="fusion" />
-          <ResultTable title="Final reranked evidence context" rows={result.finalResults} mode="rerank" />
+          <ResultTable title="Final reranked evidence context" rows={result.finalResults} mode="rerank" /></>}
         </div>
       )}
     </div>

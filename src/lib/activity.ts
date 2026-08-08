@@ -1,4 +1,6 @@
 import { supabase } from './supabase';
+import { isLocalKnowledgeRuntime } from './runtime';
+import { appendLocalActivity, getActivity } from './localKnowledge';
 import type { ActivityEvent, ActivityHistoryQuery, CreateActivityEvent } from '@/types';
 import { ActivityHistoryQuerySchema, CreateActivityEventSchema, assertRequest } from '@/shared/validation';
 
@@ -18,6 +20,24 @@ export function serializeActivityMetadata(metadata: Record<string, unknown> | un
 
 export async function recordActivity(input: CreateActivityEvent): Promise<ActivityEvent> {
   const event = assertRequest({ ...input, metadata: serializeActivityMetadata(input.metadata) }, CreateActivityEventSchema);
+  if (isLocalKnowledgeRuntime) {
+    return appendLocalActivity({
+      activity_type: event.activityType,
+      category: event.category,
+      status: event.status,
+      title: event.title,
+      description: event.description ?? null,
+      entity_type: event.entityType ?? null,
+      entity_id: event.entityId ?? null,
+      document_id: event.documentId ?? null,
+      task_id: event.taskId ?? null,
+      agent_name: event.agentName ?? null,
+      duration_ms: event.durationMs ?? null,
+      request_id: event.requestId ?? null,
+      metadata: event.metadata,
+      error_code: event.errorCode ?? null,
+    });
+  }
   const { data, error } = await supabase
     .from('activity_events')
     .insert({
@@ -46,6 +66,7 @@ export async function recordActivity(input: CreateActivityEvent): Promise<Activi
 
 export async function fetchActivityHistory(input: ActivityHistoryQuery = {}): Promise<ActivityHistoryPage> {
   const query = assertRequest(input, ActivityHistoryQuerySchema);
+  if (isLocalKnowledgeRuntime) return getActivity(query);
   let request = supabase
     .from('activity_events')
     .select('*')

@@ -7,7 +7,15 @@ import { bytesFromArrayBuffer, inferSourceType, parseUploadedDocument, semanticC
 import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL } from "../_shared/rag/types.ts";
 import { recordActivity } from "../_shared/activity.ts";
 import { validateRequest, generateRequestId, badRequest, internalError, unsupportedFormat, documentTooLarge, logFailure, logSuccess } from "../_shared/validation/index.ts";
-import { RagIngestCreateSchema, RagIngestActionSchema } from "../_shared/validation/index.ts";
+import {
+  RagIngestCreateSchema,
+  RagIngestActionSchema,
+  RagIngestAttachmentCreateSchema,
+  RagIngestAttachmentDeleteSchema,
+  RagIngestSupportingEvidenceFileSchema,
+  RagIngestSupportingEvidenceLinkSchema,
+  RagIngestSupportingEvidenceRemoveSchema,
+} from "../_shared/validation/index.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -16,6 +24,7 @@ const corsHeaders = {
 };
 const BUCKET = "organizational-documents";
 const MAX_BYTES = 15 * 1024 * 1024;
+const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 const ALLOWED_EXTENSIONS = new Set(["pdf", "docx", "pptx", "txt", "csv", "md", "markdown", "xlsx", "png", "jpg", "jpeg", "webp"]);
 
 type Supabase = SupabaseClient;
@@ -32,6 +41,16 @@ function publicMessage(error: unknown): string {
 
 function fileExtension(name: string): string {
   return name.split(".").pop()?.toLowerCase() ?? "";
+}
+
+function attachmentPathIsSafe(storagePath: string, organizationSlug: string, documentId: string): boolean {
+  const prefix = `${organizationSlug}/documents/${documentId}/attachments/`;
+  return storagePath.startsWith(prefix) && !storagePath.includes("..") && storagePath.length > prefix.length;
+}
+
+function supportingEvidencePathIsSafe(storagePath: string, organizationSlug: string, documentId: string): boolean {
+  const prefix = `${organizationSlug}/documents/${documentId}/evidence/`;
+  return storagePath.startsWith(prefix) && !storagePath.includes("..") && storagePath.length > prefix.length;
 }
 
 function classifyDocument(name: string): string {
@@ -311,6 +330,195 @@ Deno.serve(async (request) => {
       return json({ success: true, requestId, document: data });
     }
 
+    if (action === "attachment-create") {
+      const parsedAttachment = validateRequest(rawBody, RagIngestAttachmentCreateSchema, requestId);
+      if (!parsedAttachment.ok) return json(parsedAttachment.error, 400);
+      const body = parsedAttachment.data;
+      const organization = await getDefaultOrganization(supabase);
+      activityOrganizationId = organization.id;
+      activityDocumentId = body.documentId;
+      if (!attachmentPathIsSafe(body.storagePath, organization.slug, body.documentId)) {
+        return json(badRequest("Invalid attachment storage path.", undefined, requestId), 400);
+      }
+      const { data: document, error: documentError } = await supabase
+        .from("documents")
+        .select("id, original_name")
+        .eq("id", body.documentId)
+        .eq("organization_id", organization.id)
+        .single();
+      if (documentError) throw documentError;
+      const { data: object, error: storageError } = await supabase.storage.from(BUCKET).download(body.storagePath);
+      if (storageError || !object) throw new Error("Uploaded attachment was not found in private storage.");
+      if (object.size !== body.fileSize || object.size > ATTACHMENT_MAX_BYTES) throw new Error("Attachment size validation failed.");
+      const { data: attachment, error: attachmentError } = await supabase.from("record_attachments").insert({
+        document_id: body.documentId,
+        organization_id: organization.id,
+        file_name: body.fileName,
+        storage_path: body.storagePath,
+        mime_type: body.mimeType,
+        file_size: body.fileSize,
+      }).select().single();
+      if (attachmentError) throw attachmentError;
+      await recordActivity(supabase, {
+        organizationId: organization.id, requestId, documentId: body.documentId, activityType: "DOCUMENT_ATTACHMENT_UPLOADED", category: "documents", status: "success",
+        title: "Document attachment uploaded", description: body.fileName,
+        durationMs: Date.now() - startedAt,
+        metadata: { documentName: document.original_name, attachmentId: attachment.id, fileName: body.fileName, fileSize: body.fileSize, mimeType: body.mimeType },
+      });
+      logSuccess(context, Date.now() - startedAt, { operation: "attachment-create", documentId: body.documentId, attachmentId: attachment.id });
+      return json({ success: true, requestId, attachment });
+    }
+
+    if (action === "attachment-delete") {
+      const parsedAttachment = validateRequest(rawBody, RagIngestAttachmentDeleteSchema, requestId);
+      if (!parsedAttachment.ok) return json(parsedAttachment.error, 400);
+      const body = parsedAttachment.data;
+      const organization = await getDefaultOrganization(supabase);
+      activityOrganizationId = organization.id;
+      activityDocumentId = body.documentId;
+      const { data: attachment, error: attachmentError } = await supabase
+        .from("record_attachments")
+        .select("id, file_name, file_size, storage_path")
+        .eq("id", body.attachmentId)
+        .eq("document_id", body.documentId)
+        .eq("organization_id", organization.id)
+        .single();
+      if (attachmentError) throw attachmentError;
+      const { error: storageError } = await supabase.storage.from(BUCKET).remove([attachment.storage_path]);
+      if (storageError) throw new Error(`Attachment storage cleanup failed: ${storageError.message}`);
+      await recordActivity(supabase, {
+        organizationId: organization.id, requestId, documentId: body.documentId, activityType: "DOCUMENT_ATTACHMENT_DELETED", category: "documents", status: "success",
+        title: "Document attachment deleted", description: attachment.file_name,
+        durationMs: Date.now() - startedAt,
+        metadata: { attachmentId: attachment.id, fileName: attachment.file_name, fileSize: attachment.file_size },
+      });
+      const { error: deleteError } = await supabase.from("record_attachments").delete().eq("id", attachment.id).eq("organization_id", organization.id);
+      if (deleteError) throw deleteError;
+      logSuccess(context, Date.now() - startedAt, { operation: "attachment-delete", documentId: body.documentId, attachmentId: attachment.id });
+      return json({ success: true, requestId, documentId: body.documentId, attachmentId: attachment.id });
+    }
+
+    if (action === "supporting-evidence-file") {
+      const parsedEvidence = validateRequest(rawBody, RagIngestSupportingEvidenceFileSchema, requestId);
+      if (!parsedEvidence.ok) return json(parsedEvidence.error, 400);
+      const body = parsedEvidence.data;
+      const organization = await getDefaultOrganization(supabase);
+      activityOrganizationId = organization.id;
+      activityDocumentId = body.documentId;
+      if (!supportingEvidencePathIsSafe(body.storagePath, organization.slug, body.documentId)) {
+        return json(badRequest("Invalid supporting evidence storage path.", undefined, requestId), 400);
+      }
+      const { data: document, error: documentError } = await supabase
+        .from("documents")
+        .select("id, original_name, supporting_storage_path")
+        .eq("id", body.documentId)
+        .eq("organization_id", organization.id)
+        .single();
+      if (documentError) throw documentError;
+      const { data: object, error: storageError } = await supabase.storage.from(BUCKET).download(body.storagePath);
+      if (storageError || !object) throw new Error("Uploaded supporting evidence was not found in private storage.");
+      if (object.size !== body.fileSize || object.size > ATTACHMENT_MAX_BYTES) throw new Error("Supporting evidence size validation failed.");
+      const { error: updateError } = await supabase.from("documents").update({
+        supporting_evidence_type: "file",
+        supporting_file_name: body.fileName,
+        supporting_storage_path: body.storagePath,
+        supporting_mime_type: body.mimeType,
+        supporting_file_size: body.fileSize,
+        supporting_url: null,
+        supporting_uploaded_at: new Date().toISOString(),
+      }).eq("id", body.documentId).eq("organization_id", organization.id);
+      if (updateError) throw updateError;
+      if (document.supporting_storage_path && document.supporting_storage_path !== body.storagePath) {
+        const { error: cleanupError } = await supabase.storage.from(BUCKET).remove([document.supporting_storage_path]);
+        if (cleanupError) console.warn("Supporting evidence replacement cleanup failed", cleanupError.message);
+      }
+      await recordActivity(supabase, {
+        organizationId: organization.id, requestId, documentId: body.documentId, activityType: "RECORD_EVIDENCE_ATTACHED", category: "documents", status: "success",
+        title: "Supporting evidence attached", description: body.fileName,
+        durationMs: Date.now() - startedAt,
+        metadata: { documentName: document.original_name, evidenceType: "file", fileName: body.fileName, fileSize: body.fileSize, mimeType: body.mimeType },
+      });
+      logSuccess(context, Date.now() - startedAt, { operation: "supporting-evidence-file", documentId: body.documentId });
+      return json({ success: true, requestId, documentId: body.documentId });
+    }
+
+    if (action === "supporting-evidence-link") {
+      const parsedEvidence = validateRequest(rawBody, RagIngestSupportingEvidenceLinkSchema, requestId);
+      if (!parsedEvidence.ok) return json(parsedEvidence.error, 400);
+      const body = parsedEvidence.data;
+      const organization = await getDefaultOrganization(supabase);
+      activityOrganizationId = organization.id;
+      activityDocumentId = body.documentId;
+      const { data: document, error: documentError } = await supabase
+        .from("documents")
+        .select("id, original_name, supporting_storage_path")
+        .eq("id", body.documentId)
+        .eq("organization_id", organization.id)
+        .single();
+      if (documentError) throw documentError;
+      const { error: updateError } = await supabase.from("documents").update({
+        supporting_evidence_type: "link",
+        supporting_file_name: null,
+        supporting_storage_path: null,
+        supporting_mime_type: null,
+        supporting_file_size: null,
+        supporting_url: body.url,
+        supporting_uploaded_at: new Date().toISOString(),
+      }).eq("id", body.documentId).eq("organization_id", organization.id);
+      if (updateError) throw updateError;
+      if (document.supporting_storage_path) {
+        const { error: cleanupError } = await supabase.storage.from(BUCKET).remove([document.supporting_storage_path]);
+        if (cleanupError) console.warn("Supporting evidence replacement cleanup failed", cleanupError.message);
+      }
+      await recordActivity(supabase, {
+        organizationId: organization.id, requestId, documentId: body.documentId, activityType: "RECORD_EVIDENCE_ATTACHED", category: "documents", status: "success",
+        title: "Supporting evidence linked", description: body.url,
+        durationMs: Date.now() - startedAt,
+        metadata: { documentName: document.original_name, evidenceType: "link", supportingUrl: body.url },
+      });
+      logSuccess(context, Date.now() - startedAt, { operation: "supporting-evidence-link", documentId: body.documentId });
+      return json({ success: true, requestId, documentId: body.documentId });
+    }
+
+    if (action === "supporting-evidence-remove") {
+      const parsedEvidence = validateRequest(rawBody, RagIngestSupportingEvidenceRemoveSchema, requestId);
+      if (!parsedEvidence.ok) return json(parsedEvidence.error, 400);
+      const body = parsedEvidence.data;
+      const organization = await getDefaultOrganization(supabase);
+      activityOrganizationId = organization.id;
+      activityDocumentId = body.documentId;
+      const { data: document, error: documentError } = await supabase
+        .from("documents")
+        .select("id, original_name, supporting_evidence_type, supporting_file_name, supporting_file_size, supporting_storage_path")
+        .eq("id", body.documentId)
+        .eq("organization_id", organization.id)
+        .single();
+      if (documentError) throw documentError;
+      if (!document.supporting_evidence_type) return json({ success: true, requestId, documentId: body.documentId });
+      if (document.supporting_storage_path) {
+        const { error: storageError } = await supabase.storage.from(BUCKET).remove([document.supporting_storage_path]);
+        if (storageError) throw new Error(`Supporting evidence storage cleanup failed: ${storageError.message}`);
+      }
+      const { error: updateError } = await supabase.from("documents").update({
+        supporting_evidence_type: null,
+        supporting_file_name: null,
+        supporting_storage_path: null,
+        supporting_mime_type: null,
+        supporting_file_size: null,
+        supporting_url: null,
+        supporting_uploaded_at: null,
+      }).eq("id", body.documentId).eq("organization_id", organization.id);
+      if (updateError) throw updateError;
+      await recordActivity(supabase, {
+        organizationId: organization.id, requestId, documentId: body.documentId, activityType: "RECORD_EVIDENCE_REMOVED", category: "documents", status: "success",
+        title: "Supporting evidence removed", description: document.supporting_file_name ?? document.original_name,
+        durationMs: Date.now() - startedAt,
+        metadata: { documentName: document.original_name, evidenceType: document.supporting_evidence_type, fileName: document.supporting_file_name, fileSize: document.supporting_file_size },
+      });
+      logSuccess(context, Date.now() - startedAt, { operation: "supporting-evidence-remove", documentId: body.documentId });
+      return json({ success: true, requestId, documentId: body.documentId });
+    }
+
     // Validate process / reindex / delete against the action schema.
     const parsedAction = validateRequest(rawBody, RagIngestActionSchema, requestId);
     if (!parsedAction.ok) {
@@ -328,18 +536,25 @@ Deno.serve(async (request) => {
       return json({ success: true, requestId, ...result });
     }
     if (actionBody.action === "delete") {
-      const { data: document, error: findError } = await supabase.from("documents").select("storage_path, original_name, mime_type").eq("id", documentId).eq("organization_id", organization.id).single();
+      const { data: document, error: findError } = await supabase.from("documents").select("storage_path, original_name, mime_type, supporting_storage_path").eq("id", documentId).eq("organization_id", organization.id).single();
       if (findError) throw findError;
+      const { data: attachments, error: attachmentsError } = await supabase
+        .from("record_attachments")
+        .select("storage_path")
+        .eq("document_id", documentId)
+        .eq("organization_id", organization.id);
+      if (attachmentsError) throw attachmentsError;
       await clearDocumentIndex(supabase, organization.id, documentId);
-      if (document.storage_path) {
-        const { error: storageError } = await supabase.storage.from(BUCKET).remove([document.storage_path]);
+      const storagePaths = [document.storage_path, document.supporting_storage_path, ...(attachments ?? []).map((attachment: { storage_path: string }) => attachment.storage_path)].filter((path): path is string => Boolean(path));
+      if (storagePaths.length) {
+        const { error: storageError } = await supabase.storage.from(BUCKET).remove(storagePaths);
         if (storageError) throw new Error(`Storage cleanup failed: ${storageError.message}`);
       }
       await recordActivity(supabase, {
         organizationId: organization.id, requestId, documentId, activityType: "DOCUMENT_DELETED", category: "documents", status: "success",
         title: "Document deleted", description: document.original_name,
         durationMs: Date.now() - startedAt,
-        metadata: { documentName: document.original_name, mimeType: document.mime_type ?? null, storageCleanup: Boolean(document.storage_path) },
+        metadata: { documentName: document.original_name, mimeType: document.mime_type ?? null, storageCleanup: storagePaths.length, attachmentCount: attachments?.length ?? 0, supportingEvidenceCleanup: Boolean(document.supporting_storage_path) },
       });
       const { error: deleteError } = await supabase.from("documents").delete().eq("id", documentId).eq("organization_id", organization.id);
       if (deleteError) throw deleteError;

@@ -25,6 +25,15 @@ import {
 } from './index';
 import {
   DocumentUploadSchema,
+  DocumentAttachmentUploadSchema,
+  DocumentAttachmentDeleteSchema,
+  DocumentAttachmentListSchema,
+  DocumentUpdateSchema,
+  SupportingEvidenceUploadSchema,
+  EvidenceURLSchema,
+  SupportingEvidenceRemoveSchema,
+  RecordFiltersSchema,
+  ReportExportRequestSchema,
   QuerySchema,
   HybridRetrievalSchema,
   GraphSearchSchema,
@@ -102,6 +111,70 @@ describe('Document Upload validation', () => {
       const details = result.error.details as Array<{ path: string; message: string }>;
       expect(details.some((d) => d.path === 'linkedAssetId')).toBe(true);
     }
+  });
+});
+
+describe('Document attachment validation', () => {
+  const attachment = {
+    documentId: UUID,
+    fileName: 'supporting-evidence.pdf',
+    extension: 'pdf',
+    mimeType: 'application/pdf',
+    fileSize: 1024,
+    storagePath: `default/documents/${UUID}/attachments/attachment-supporting-evidence.pdf`,
+  };
+
+  it('accepts a valid attachment and allows a document with no attachments', () => {
+    expect(parseRequest({ documentId: UUID }, DocumentAttachmentListSchema).success).toBe(true);
+    expect(parseRequest(attachment, DocumentAttachmentUploadSchema).success).toBe(true);
+  });
+
+  it('validates updates to persisted document fields', () => {
+    expect(parseRequest({ documentId: UUID, documentType: 'Project Brief', classification: 'Strategy', sourceDepartment: 'Operations', status: 'Ready', notes: 'Reviewed', recommendations: ['Publish the approved brief'] }, DocumentUpdateSchema).success).toBe(true);
+    expect(parseRequest({ documentId: UUID, documentType: '', classification: null, sourceDepartment: null, status: 'Active' }, DocumentUpdateSchema).success).toBe(false);
+  });
+
+  it('accepts multiple independently valid attachments', () => {
+    expect(parseRequest({ ...attachment, fileName: 'photo.png', extension: 'png', mimeType: 'image/png' }, DocumentAttachmentUploadSchema).success).toBe(true);
+    expect(parseRequest({ ...attachment, fileName: 'notes.txt', extension: 'txt', mimeType: 'text/plain' }, DocumentAttachmentUploadSchema).success).toBe(true);
+  });
+
+  it('rejects an unsupported attachment type and oversized file', () => {
+    expect(parseRequest({ ...attachment, fileName: 'script.exe', extension: 'exe', mimeType: 'application/x-msdownload' }, DocumentAttachmentUploadSchema).success).toBe(false);
+    expect(parseRequest({ ...attachment, fileSize: 11 * 1024 * 1024 }, DocumentAttachmentUploadSchema).success).toBe(false);
+  });
+
+  it('validates attachment deletion and rejects malformed document IDs', () => {
+    expect(parseRequest({ documentId: UUID, attachmentId: UUID }, DocumentAttachmentDeleteSchema).success).toBe(true);
+    expect(parseRequest({ documentId: 'not-a-uuid' }, DocumentAttachmentListSchema).success).toBe(false);
+  });
+});
+
+describe('Supporting evidence and record-report validation', () => {
+  const evidenceFile = {
+    documentId: UUID,
+    fileName: 'inspection-photo.png',
+    extension: 'png',
+    mimeType: 'image/png',
+    fileSize: 1024,
+    storagePath: `default/documents/${UUID}/evidence/inspection-photo.png`,
+  };
+
+  it('accepts one supported evidence file, a link, filters, and report exports', () => {
+    expect(parseRequest(evidenceFile, SupportingEvidenceUploadSchema).success).toBe(true);
+    expect(parseRequest({ documentId: UUID, url: 'https://evidence.example/record/123' }, EvidenceURLSchema).success).toBe(true);
+    expect(parseRequest({ documentId: UUID }, SupportingEvidenceRemoveSchema).success).toBe(true);
+    expect(parseRequest({ keyword: 'pump', documentType: 'Inspection Report', category: 'Safety', status: 'Ready' }, RecordFiltersSchema).success).toBe(true);
+    expect(parseRequest({ documentId: UUID, format: 'csv' }, ReportExportRequestSchema).success).toBe(true);
+  });
+
+  it('rejects unsupported evidence, non-HTTP evidence links, and unknown export formats', () => {
+    expect(parseRequest({ ...evidenceFile, extension: 'txt', mimeType: 'text/plain' }, SupportingEvidenceUploadSchema).success).toBe(false);
+    expect(parseRequest({ ...evidenceFile, extension: 'pdf', mimeType: 'image/png' }, SupportingEvidenceUploadSchema).success).toBe(false);
+    expect(parseRequest({ keyword: 'pump', status: 'Active' }, RecordFiltersSchema).success).toBe(false);
+    expect(parseRequest({ documentId: UUID, url: 'ftp://evidence.example/record/123' }, EvidenceURLSchema).success).toBe(false);
+    expect(parseRequest({ documentId: UUID, format: 'pdf' }, ReportExportRequestSchema).success).toBe(true);
+    expect(parseRequest({ documentId: UUID, format: 'docx' }, ReportExportRequestSchema).success).toBe(false);
   });
 });
 

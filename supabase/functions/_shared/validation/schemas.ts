@@ -61,6 +61,70 @@ export const RagIngestActionSchema = z.object({
 });
 export type RagIngestActionRequest = z.infer<typeof RagIngestActionSchema>;
 
+const attachmentExtensions = ["pdf", "docx", "png", "jpg", "jpeg", "webp", "txt", "csv"] as const;
+const attachmentMimeTypes = [
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "image/png", "image/jpeg", "image/webp", "text/plain", "text/csv",
+] as const;
+
+export const RagIngestAttachmentCreateSchema = z.object({
+  action: z.literal("attachment-create"),
+  documentId: uuidSchema,
+  fileName: z.string().min(1).max(255).refine((name) => !/[\\/\0]/.test(name), "Filename contains unsupported characters."),
+  extension: z.enum(attachmentExtensions),
+  mimeType: z.enum(attachmentMimeTypes),
+  fileSize: boundedInt(1, 10 * 1024 * 1024),
+  storagePath: z.string().min(1).max(1024),
+});
+export type RagIngestAttachmentCreateRequest = z.infer<typeof RagIngestAttachmentCreateSchema>;
+
+export const RagIngestAttachmentDeleteSchema = z.object({
+  action: z.literal("attachment-delete"),
+  documentId: uuidSchema,
+  attachmentId: uuidSchema,
+});
+export type RagIngestAttachmentDeleteRequest = z.infer<typeof RagIngestAttachmentDeleteSchema>;
+
+const supportingEvidenceExtensions = ["pdf", "docx", "png", "jpg", "jpeg", "webp"] as const;
+const supportingEvidenceMimeTypes = [
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "image/png", "image/jpeg", "image/webp",
+] as const;
+const supportingEvidenceMimeByExtension: Record<(typeof supportingEvidenceExtensions)[number], (typeof supportingEvidenceMimeTypes)[number]> = {
+  pdf: "application/pdf",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+};
+
+export const RagIngestSupportingEvidenceFileSchema = z.object({
+  action: z.literal("supporting-evidence-file"),
+  documentId: uuidSchema,
+  fileName: z.string().min(1).max(255).refine((name) => !/[\\/\0]/.test(name), "Filename contains unsupported characters."),
+  extension: z.enum(supportingEvidenceExtensions),
+  mimeType: z.enum(supportingEvidenceMimeTypes),
+  fileSize: boundedInt(1, 10 * 1024 * 1024),
+  storagePath: z.string().min(1).max(1024),
+}).refine((value) => supportingEvidenceMimeByExtension[value.extension] === value.mimeType, {
+  path: ["mimeType"],
+  message: "File extension and MIME type do not match.",
+});
+
+export const RagIngestSupportingEvidenceLinkSchema = z.object({
+  action: z.literal("supporting-evidence-link"),
+  documentId: uuidSchema,
+  url: z.string().url().max(2048).refine((value) => /^https?:\/\//i.test(value), "Only HTTP(S) evidence links are supported."),
+});
+
+export const RagIngestSupportingEvidenceRemoveSchema = z.object({
+  action: z.literal("supporting-evidence-remove"),
+  documentId: uuidSchema,
+});
+
 export const RagIngestDocumentSchema = z.record(z.string(), z.unknown());
 
 export const RagIngestCreateResponseSchema = z.object({

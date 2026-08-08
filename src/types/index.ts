@@ -61,6 +61,26 @@ export interface Doc {
   effective_until?: string | null;
   is_current?: boolean;
   updated_at?: string;
+  attachment_count?: number;
+  supporting_evidence_type?: 'file' | 'link' | null;
+  supporting_file_name?: string | null;
+  supporting_storage_path?: string | null;
+  supporting_mime_type?: string | null;
+  supporting_file_size?: number | null;
+  supporting_url?: string | null;
+  supporting_uploaded_at?: string | null;
+}
+
+export interface DocumentAttachment {
+  id: string;
+  document_id: string;
+  organization_id: string;
+  file_name: string;
+  storage_path: string;
+  mime_type: string | null;
+  file_size: number | null;
+  uploaded_by: string | null;
+  created_at: string;
 }
 
 export interface DocChunk {
@@ -321,6 +341,15 @@ export type ActivityType =
   | 'DOCUMENT_INDEXED'
   | 'DOCUMENT_REINDEXED'
   | 'DOCUMENT_DELETED'
+  | 'DOCUMENT_ATTACHMENT_UPLOADED'
+  | 'DOCUMENT_ATTACHMENT_DELETED'
+  | 'RECORD_CREATED'
+  | 'RECORD_UPDATED'
+  | 'RECORD_EVIDENCE_ATTACHED'
+  | 'RECORD_EVIDENCE_REMOVED'
+  | 'RECORD_SEARCH_EXECUTED'
+  | 'RECORD_REPORT_EXPORTED'
+  | 'LOCAL_KNOWLEDGE_QUERY_COMPLETED'
   | 'RAG_QUERY_STARTED'
   | 'RAG_QUERY_COMPLETED'
   | 'RAG_QUERY_FAILED'

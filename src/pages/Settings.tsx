@@ -39,6 +39,15 @@ export function Settings() {
       <PageHeader title="Settings" description="System configuration and facility information" />
 
       <div className="space-y-4">
+        {settings.runtime === 'Local Knowledge' && (
+          <Card title="System Status">
+            <div className="space-y-2 text-[13px]">
+              <div className="flex items-center gap-2"><Database className="h-4 w-4 text-slate-400" /><span className="text-slate-500">Runtime:</span><span className="font-medium text-slate-700">Local Knowledge</span></div>
+              <div className="flex items-center gap-2"><Database className="h-4 w-4 text-slate-400" /><span className="text-slate-500">Backend:</span><span className="font-medium text-slate-700">Offline</span></div>
+              <div className="flex items-center gap-2"><Cpu className="h-4 w-4 text-slate-400" /><span className="text-slate-500">AI Provider:</span><span className="font-medium text-slate-700">Unavailable</span></div>
+            </div>
+          </Card>
+        )}
         <Card title="Facility">
           <div className="space-y-2 text-[13px]">
             <div className="flex items-center gap-2">
@@ -81,12 +90,12 @@ export function Settings() {
             <div className="flex items-center gap-2">
               <Database className="h-4 w-4 text-slate-400" />
               <span className="text-slate-500">Type:</span>
-              <span className="font-medium text-slate-700">PostgreSQL (Supabase)</span>
+              <span className="font-medium text-slate-700">{settings.backend === 'Offline' ? 'Browser localStorage + IndexedDB' : 'PostgreSQL (Supabase)'}</span>
             </div>
             <div className="flex items-center gap-2">
               <Database className="h-4 w-4 text-slate-400" />
               <span className="text-slate-500">RLS:</span>
-              <span className="font-medium text-slate-700">Enabled (anon + authenticated)</span>
+              <span className="font-medium text-slate-700">{settings.backend === 'Offline' ? 'Not applicable in local mode' : 'Enabled (anon + authenticated)'}</span>
             </div>
           </div>
         </Card>

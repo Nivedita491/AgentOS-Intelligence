@@ -1,4 +1,34 @@
 import { assertSupabaseConfigured, supabase } from './supabase';
+import { isLocalKnowledgeRuntime } from './runtime';
+import {
+  createLocalDocument,
+  deleteLocalAttachment,
+  getAssets as getLocalAssets,
+  getDocument as getLocalDocument,
+  getDocumentAttachments as getLocalDocumentAttachments,
+  getDocuments as getLocalDocuments,
+  getChunks as getLocalChunks,
+  localAttachmentUrl,
+  localComplianceFindings,
+  localComplianceRules,
+  localCopilot,
+  localDeleteDocument,
+  localEntityEvidence,
+  localEvidenceUrl,
+  getLocalGraph,
+  getLocalSettings,
+  getQueries as getLocalQueries,
+  localReindexDocument,
+  localRagSearch,
+  recordLocalSearch,
+  removeLocalEvidence,
+  saveLocalAttachment,
+  saveLocalEvidenceFile,
+  saveLocalEvidenceLink,
+  saveLocalQuery,
+  updateLocalDocumentRecord,
+} from './localKnowledge';
+import { recordActivity } from './activity';
 import type {
   Asset,
   Doc,
@@ -21,6 +51,7 @@ import type {
   WorkingMemoryRecord,
   EpisodicMemoryRecord,
   RetrievalDebug,
+  DocumentAttachment,
 } from '@/types';
 import type { z } from 'zod';
 import {
@@ -33,9 +64,17 @@ import {
   CopilotQuerySchema,
   DocumentUploadSchema,
   DocumentActionSchema,
+  DocumentUpdateSchema,
   DocumentCreateResponseSchema,
   DocumentActionResponseSchema,
   ForgeAIResponseSchema,
+  DocumentAttachmentUploadSchema,
+  DocumentAttachmentDeleteSchema,
+  DocumentAttachmentListSchema,
+  DocumentAttachmentIdSchema,
+  SupportingEvidenceUploadSchema,
+  EvidenceURLSchema,
+  SupportingEvidenceRemoveSchema,
 } from '@/shared/validation';
 
 const DOCUMENT_BUCKET = 'organizational-documents';
@@ -48,6 +87,7 @@ function edgeUrl(functionName: 'forge-ai' | 'rag-ingest'): string {
 
 // ---------- Assets ----------
 export async function fetchAssets(): Promise<Asset[]> {
+  if (isLocalKnowledgeRuntime) return getLocalAssets();
   const { data, error } = await supabase
     .from('assets')
     .select('*')
@@ -57,6 +97,7 @@ export async function fetchAssets(): Promise<Asset[]> {
 }
 
 export async function fetchAsset(id: string): Promise<Asset | null> {
+  if (isLocalKnowledgeRuntime) return getLocalAssets().find((asset) => asset.id === id) ?? null;
   const { data, error } = await supabase
     .from('assets')
     .select('*')
@@ -67,6 +108,7 @@ export async function fetchAsset(id: string): Promise<Asset | null> {
 }
 
 export async function fetchAssetByTag(tag: string): Promise<Asset | null> {
+  if (isLocalKnowledgeRuntime) return getLocalAssets().find((asset) => asset.asset_tag.toLowerCase() === tag.toLowerCase()) ?? null;
   const { data, error } = await supabase
     .from('assets')
     .select('*')
@@ -130,6 +172,7 @@ export async function fetchAssetTimeline(assetId: string): Promise<TimelineEvent
 }
 
 export async function fetchAssetDocuments(assetId: string): Promise<Doc[]> {
+  if (isLocalKnowledgeRuntime) return getLocalDocuments().filter((document) => document.linked_asset_id === assetId);
   const { data, error } = await supabase
     .from('documents')
     .select('*')
@@ -141,15 +184,20 @@ export async function fetchAssetDocuments(assetId: string): Promise<Doc[]> {
 
 // ---------- Documents ----------
 export async function fetchDocuments(): Promise<Doc[]> {
+  if (isLocalKnowledgeRuntime) return getLocalDocuments().map((document) => ({ ...document, attachment_count: getLocalDocumentAttachments(document.id).length }));
   const { data, error } = await supabase
     .from('documents')
-    .select('*')
+    .select('*, record_attachments(count)')
     .order('uploaded_at', { ascending: false });
   if (error) throw error;
-  return data as Doc[];
+  return ((data ?? []) as Array<Doc & { record_attachments?: Array<{ count: number }> }>).map(({ record_attachments, ...document }) => ({
+    ...document,
+    attachment_count: record_attachments?.[0]?.count ?? 0,
+  }));
 }
 
 export async function fetchDocument(id: string): Promise<Doc | null> {
+  if (isLocalKnowledgeRuntime) return getLocalDocument(id);
   const { data, error } = await supabase
     .from('documents')
     .select('*')
@@ -160,6 +208,7 @@ export async function fetchDocument(id: string): Promise<Doc | null> {
 }
 
 export async function fetchDocumentChunks(documentId: string): Promise<DocChunk[]> {
+  if (isLocalKnowledgeRuntime) return getLocalChunks(documentId);
   const { data, error } = await supabase
     .from('document_chunks')
     .select('*')
@@ -169,11 +218,192 @@ export async function fetchDocumentChunks(documentId: string): Promise<DocChunk[
   return (data as DocChunk[]) ?? [];
 }
 
+/** Records local search activity without changing page-level service selection. */
+export async function recordDocumentSearch(filters: Record<string, unknown>, resultCount: number): Promise<void> {
+  if (isLocalKnowledgeRuntime) recordLocalSearch(filters, resultCount);
+}
+
+export async function fetchDocumentAttachments(documentId: string): Promise<DocumentAttachment[]> {
+  if (isLocalKnowledgeRuntime) return getLocalDocumentAttachments(documentId);
+  const request = assertRequest({ documentId }, DocumentAttachmentListSchema);
+  const { data, error } = await supabase
+    .from('record_attachments')
+    .select('*')
+    .eq('document_id', request.documentId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data as DocumentAttachment[]) ?? [];
+}
+
+export interface AttachmentUploadFailure {
+  fileName: string;
+  message: string;
+}
+
+export interface AttachmentUploadSummary {
+  uploaded: DocumentAttachment[];
+  failed: AttachmentUploadFailure[];
+}
+
+const ATTACHMENT_MIME_TYPES: Record<string, string> = {
+  pdf: 'application/pdf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
+  txt: 'text/plain', csv: 'text/csv',
+};
+
+function attachmentUploadRequest(documentId: string, file: File) {
+  const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+  const mimeType = file.type || ATTACHMENT_MIME_TYPES[extension] || '';
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const storagePath = `${DEFAULT_ORGANIZATION_SLUG}/documents/${documentId}/attachments/${crypto.randomUUID()}-${safeName}`;
+  return assertRequest({
+    documentId,
+    fileName: file.name,
+    extension,
+    mimeType,
+    fileSize: file.size,
+    storagePath,
+  }, DocumentAttachmentUploadSchema);
+}
+
+export async function uploadDocumentAttachment(documentId: string, file: File): Promise<DocumentAttachment> {
+  if (isLocalKnowledgeRuntime) return saveLocalAttachment(documentId, file);
+  const request = attachmentUploadRequest(documentId, file);
+  const { error: storageError } = await supabase.storage
+    .from(DOCUMENT_BUCKET)
+    .upload(request.storagePath, file, { contentType: request.mimeType, upsert: false });
+  if (storageError) throw storageError;
+
+  try {
+    const payload = await invokeRagIngest<{ attachment: DocumentAttachment }>({ action: 'attachment-create', ...request });
+    if (!payload.attachment) throw new Error('Attachment metadata could not be saved.');
+    return payload.attachment;
+  } catch (error) {
+    await supabase.storage.from(DOCUMENT_BUCKET).remove([request.storagePath]);
+    throw error;
+  }
+}
+
+export async function uploadDocumentAttachments(documentId: string, files: File[]): Promise<AttachmentUploadSummary> {
+  const uploaded: DocumentAttachment[] = [];
+  const failed: AttachmentUploadFailure[] = [];
+  for (const file of files) {
+    try {
+      uploaded.push(await uploadDocumentAttachment(documentId, file));
+    } catch (error) {
+      failed.push({ fileName: file.name, message: toAttachmentMessage(error) });
+    }
+  }
+  return { uploaded, failed };
+}
+
+export async function deleteDocumentAttachment(documentId: string, attachmentId: string): Promise<void> {
+  if (isLocalKnowledgeRuntime) return deleteLocalAttachment(documentId, attachmentId);
+  const request = assertRequest({ documentId, attachmentId }, DocumentAttachmentDeleteSchema);
+  await invokeRagIngest<{ attachmentId: string }>({ action: 'attachment-delete', ...request });
+}
+
+export async function getDocumentAttachmentUrl(attachmentId: string, download = false): Promise<string> {
+  if (isLocalKnowledgeRuntime) return localAttachmentUrl(attachmentId);
+  const request = assertRequest({ attachmentId }, DocumentAttachmentIdSchema);
+  const { data: attachment, error: attachmentError } = await supabase
+    .from('record_attachments')
+    .select('file_name, storage_path')
+    .eq('id', request.attachmentId)
+    .maybeSingle();
+  if (attachmentError) throw attachmentError;
+  if (!attachment) throw new Error('Attachment not found.');
+  const { data, error } = await supabase.storage
+    .from(DOCUMENT_BUCKET)
+    .createSignedUrl(attachment.storage_path, 60, { download: download ? attachment.file_name : false });
+  if (error) throw error;
+  if (!data?.signedUrl) throw new Error('A secure attachment link could not be created.');
+  return data.signedUrl;
+}
+
+const SUPPORTING_EVIDENCE_MIME_TYPES: Record<string, string> = {
+  pdf: 'application/pdf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
+};
+
+function supportingEvidenceUploadRequest(documentId: string, file: File) {
+  const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+  const mimeType = file.type || SUPPORTING_EVIDENCE_MIME_TYPES[extension] || '';
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const storagePath = `${DEFAULT_ORGANIZATION_SLUG}/documents/${documentId}/evidence/${crypto.randomUUID()}-${safeName}`;
+  return assertRequest({
+    documentId,
+    fileName: file.name,
+    extension,
+    mimeType,
+    fileSize: file.size,
+    storagePath,
+  }, SupportingEvidenceUploadSchema);
+}
+
+/** Replaces the document's single supporting-evidence item with a private file. */
+export async function saveSupportingEvidenceFile(documentId: string, file: File): Promise<void> {
+  if (isLocalKnowledgeRuntime) return saveLocalEvidenceFile(documentId, file);
+  const request = supportingEvidenceUploadRequest(documentId, file);
+  const { error: storageError } = await supabase.storage
+    .from(DOCUMENT_BUCKET)
+    .upload(request.storagePath, file, { contentType: request.mimeType, upsert: false });
+  if (storageError) throw storageError;
+  try {
+    await invokeRagIngest<{ documentId: string }>({ action: 'supporting-evidence-file', ...request });
+  } catch (error) {
+    await supabase.storage.from(DOCUMENT_BUCKET).remove([request.storagePath]);
+    throw error;
+  }
+}
+
+/** Replaces the document's single supporting-evidence item with an external HTTP(S) link. */
+export async function saveSupportingEvidenceLink(documentId: string, url: string): Promise<void> {
+  if (isLocalKnowledgeRuntime) return saveLocalEvidenceLink(documentId, url);
+  const request = assertRequest({ documentId, url: url.trim() }, EvidenceURLSchema);
+  await invokeRagIngest<{ documentId: string }>({ action: 'supporting-evidence-link', ...request });
+}
+
+export async function removeSupportingEvidence(documentId: string): Promise<void> {
+  if (isLocalKnowledgeRuntime) return removeLocalEvidence(documentId);
+  const request = assertRequest({ documentId }, SupportingEvidenceRemoveSchema);
+  await invokeRagIngest<{ documentId: string }>({ action: 'supporting-evidence-remove', ...request });
+}
+
+export async function getSupportingEvidenceUrl(document: Doc, download = false): Promise<string | null> {
+  if (isLocalKnowledgeRuntime) return localEvidenceUrl(document);
+  if (document.supporting_evidence_type === 'link') return document.supporting_url ?? null;
+  if (document.supporting_evidence_type !== 'file' || !document.supporting_storage_path) return null;
+  const { data, error } = await supabase.storage
+    .from(DOCUMENT_BUCKET)
+    .createSignedUrl(document.supporting_storage_path, 60, { download: download ? document.supporting_file_name ?? 'supporting-evidence' : false });
+  if (error) throw error;
+  if (!data?.signedUrl) throw new Error('A secure supporting-evidence link could not be created.');
+  return data.signedUrl;
+}
+
+function toAttachmentMessage(error: unknown): string {
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') return error.message;
+  return 'Attachment upload failed.';
+}
+
 export async function uploadDocument(
   file: File,
   linkedAssetId: string | null,
   onStatus?: (status: string) => void,
-): Promise<Doc> {
+  attachments: File[] = [],
+): Promise<{ document: Doc; attachmentFailures: AttachmentUploadFailure[] }> {
+  if (isLocalKnowledgeRuntime) {
+    const document = await createLocalDocument(file, linkedAssetId, onStatus);
+    const attachmentFailures: AttachmentUploadFailure[] = [];
+    for (const attachment of attachments) {
+      try { await saveLocalAttachment(document.id, attachment); }
+      catch (error) { attachmentFailures.push({ fileName: attachment.name, message: toAttachmentMessage(error) }); }
+    }
+    return { document, attachmentFailures };
+  }
   onStatus?.('Uploading');
   const allowed = ['pdf', 'txt', 'csv', 'docx', 'pptx', 'xlsx', 'md', 'markdown', 'png', 'jpg', 'jpeg', 'webp'];
   const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
@@ -224,8 +454,13 @@ export async function uploadDocument(
     if (processingError) throw processingError;
     const ready = await fetchDocument(document.id);
     if (!ready) throw new Error('Document indexing completed but the document could not be loaded.');
+    let attachmentFailures: AttachmentUploadFailure[] = [];
+    if (attachments.length) {
+      onStatus?.('Uploading attachments');
+      ({ failed: attachmentFailures } = await uploadDocumentAttachments(ready.id, attachments));
+    }
     onStatus?.(ready.status);
-    return ready;
+    return { document: ready, attachmentFailures };
   } catch (error) {
     if (!document) await supabase.storage.from(DOCUMENT_BUCKET).remove([storagePath]);
     throw error;
@@ -334,17 +569,47 @@ async function invokeRagIngest<T>(body: Record<string, unknown>, responseSchema?
 }
 
 export async function reindexDocument(documentId: string): Promise<void> {
+  if (isLocalKnowledgeRuntime) return localReindexDocument(documentId);
   const actionRequest = assertRequest({ action: 'reindex', documentId }, DocumentActionSchema);
   await invokeRagIngest<{ documentId: string }>(actionRequest, DocumentActionResponseSchema);
 }
 
 export async function deleteDocument(documentId: string): Promise<void> {
+  if (isLocalKnowledgeRuntime) return localDeleteDocument(documentId);
   const actionRequest = assertRequest({ action: 'delete', documentId }, DocumentActionSchema);
   await invokeRagIngest<{ documentId: string }>(actionRequest, DocumentActionResponseSchema);
 }
 
+export async function updateDocumentRecord(input: {
+  documentId: string;
+  documentType: string;
+  classification: string | null;
+  sourceDepartment: string | null;
+  status: Doc['status'];
+  notes?: string;
+  recommendations?: string[];
+}): Promise<Doc> {
+  const request = assertRequest(input, DocumentUpdateSchema);
+  if (isLocalKnowledgeRuntime) return updateLocalDocumentRecord(request);
+  const current = await fetchDocument(request.documentId);
+  if (!current) throw new Error('Document not found.');
+  const { data, error } = await supabase.from('documents').update({
+    document_type: request.documentType,
+    classification: request.classification,
+    source_department: request.sourceDepartment,
+    status: request.status,
+    metadata_json: { ...(current.metadata_json ?? {}), notes: request.notes ?? '', recommendations: request.recommendations ?? [] },
+  }).eq('id', request.documentId).select().single();
+  if (error) throw error;
+  if (current.organization_id) {
+    void recordActivity({ organizationId: current.organization_id, requestId: generateRequestId(), activityType: 'RECORD_UPDATED', category: 'documents', status: 'success', title: 'Record updated', description: current.original_name, documentId: current.id, metadata: { documentName: current.original_name } }).catch(() => undefined);
+  }
+  return data as Doc;
+}
+
 // ---------- Maintenance / Incidents / Inspections ----------
 export async function fetchMaintenanceEvents(assetId: string): Promise<MaintenanceEvent[]> {
+  if (isLocalKnowledgeRuntime) return [];
   const { data, error } = await supabase
     .from('maintenance_events')
     .select('*')
@@ -355,6 +620,7 @@ export async function fetchMaintenanceEvents(assetId: string): Promise<Maintenan
 }
 
 export async function fetchIncidents(assetId: string): Promise<Incident[]> {
+  if (isLocalKnowledgeRuntime) return [];
   const { data, error } = await supabase
     .from('incidents')
     .select('*')
@@ -365,6 +631,7 @@ export async function fetchIncidents(assetId: string): Promise<Incident[]> {
 }
 
 export async function fetchInspections(assetId: string): Promise<Inspection[]> {
+  if (isLocalKnowledgeRuntime) return [];
   const { data, error } = await supabase
     .from('inspections')
     .select('*')
@@ -375,6 +642,7 @@ export async function fetchInspections(assetId: string): Promise<Inspection[]> {
 }
 
 export async function fetchAllMaintenanceEvents(): Promise<MaintenanceEvent[]> {
+  if (isLocalKnowledgeRuntime) return [];
   const { data, error } = await supabase
     .from('maintenance_events')
     .select('*, assets!inner(asset_tag, name, type, location, health_status)')
@@ -384,6 +652,7 @@ export async function fetchAllMaintenanceEvents(): Promise<MaintenanceEvent[]> {
 }
 
 export async function fetchAllIncidents(): Promise<Incident[]> {
+  if (isLocalKnowledgeRuntime) return [];
   const { data, error } = await supabase
     .from('incidents')
     .select('*, assets!inner(asset_tag, name, type, location)')
@@ -394,12 +663,14 @@ export async function fetchAllIncidents(): Promise<Incident[]> {
 
 // ---------- Compliance ----------
 export async function fetchComplianceRules(): Promise<ComplianceRule[]> {
+  if (isLocalKnowledgeRuntime) return localComplianceRules();
   const { data, error } = await supabase.from('compliance_rules').select('*');
   if (error) throw error;
   return data as ComplianceRule[];
 }
 
 export async function fetchComplianceFindings(): Promise<ComplianceFinding[]> {
+  if (isLocalKnowledgeRuntime) return localComplianceFindings();
   const { data, error } = await supabase.from('compliance_findings').select('*');
   if (error) throw error;
   return data as ComplianceFinding[];
@@ -407,6 +678,7 @@ export async function fetchComplianceFindings(): Promise<ComplianceFinding[]> {
 
 // ---------- Alerts ----------
 export async function fetchAlerts(): Promise<Alert[]> {
+  if (isLocalKnowledgeRuntime) return [];
   const { data, error } = await supabase
     .from('alerts')
     .select('*')
@@ -419,12 +691,14 @@ export async function updateAlert(
   id: string,
   patch: Partial<Alert>,
 ): Promise<void> {
+  if (isLocalKnowledgeRuntime) return;
   const { error } = await supabase.from('alerts').update(patch).eq('id', id);
   if (error) throw error;
 }
 
 // ---------- AI Queries ----------
 export async function fetchAIQueries(limit = 20): Promise<AIQuery[]> {
+  if (isLocalKnowledgeRuntime) return getLocalQueries(limit);
   const { data, error } = await supabase
     .from('ai_queries')
     .select('*')
@@ -440,6 +714,7 @@ export async function copilotQuery(
 ): Promise<{ answer: AnswerPayload; sources: CitationSource[]; fallback: boolean }> {
   const requestBody = { query, assetId, mode: 'generate' as const };
   assertRequest(requestBody, CopilotQuerySchema);
+  if (isLocalKnowledgeRuntime) return localCopilot(query);
   const payload = await invokeEdge<{ answer: AnswerPayload }>(edgeUrl('forge-ai'), requestBody, 'Copilot', ForgeAIResponseSchema);
   if (!payload.answer) throw new Error('Invalid AI response');
   return {
@@ -455,6 +730,7 @@ export async function ragSearch(
 ): Promise<RetrievalDebug> {
   const requestBody = { query, filters, mode: 'search' as const };
   assertRequest(requestBody, CopilotQuerySchema);
+  if (isLocalKnowledgeRuntime) return localRagSearch(query);
   const payload = await invokeEdge<{ retrieval: unknown }>(edgeUrl('forge-ai'), requestBody, 'RAG Search', ForgeAIResponseSchema);
   if (!payload.retrieval || typeof payload.retrieval !== 'object') {
     throw new Error(`RAG search service error: invalid response`);
@@ -471,6 +747,7 @@ export async function saveAIQuery(row: {
   sources_json?: CitationSource[];
   response_time_ms?: number;
 }): Promise<void> {
+  if (isLocalKnowledgeRuntime) return saveLocalQuery(row);
   await supabase.from('ai_queries').insert({
     query: row.query,
     intent: row.intent ?? null,
@@ -484,6 +761,7 @@ export async function saveAIQuery(row: {
 
 // ---------- Shared memory ----------
 export async function fetchWorkingMemory(limit = 20): Promise<WorkingMemoryRecord[]> {
+  if (isLocalKnowledgeRuntime) return [];
   const { data, error } = await supabase
     .from('working_memory')
     .select('*')
@@ -494,6 +772,7 @@ export async function fetchWorkingMemory(limit = 20): Promise<WorkingMemoryRecor
 }
 
 export async function fetchEpisodicMemory(limit = 30): Promise<EpisodicMemoryRecord[]> {
+  if (isLocalKnowledgeRuntime) return [];
   const { data, error } = await supabase
     .from('episodic_memory')
     .select('*')
@@ -505,6 +784,7 @@ export async function fetchEpisodicMemory(limit = 30): Promise<EpisodicMemoryRec
 
 // ---------- Recommended Actions ----------
 export async function fetchRecommendedActions(): Promise<RecommendedAction[]> {
+  if (isLocalKnowledgeRuntime) return [];
   const { data, error } = await supabase
     .from('recommended_actions')
     .select('*')
@@ -516,6 +796,7 @@ export async function fetchRecommendedActions(): Promise<RecommendedAction[]> {
 export async function createRecommendedAction(
   action: Omit<RecommendedAction, 'id' | 'created_at'>,
 ): Promise<RecommendedAction | null> {
+  if (isLocalKnowledgeRuntime) return null;
   const { data, error } = await supabase
     .from('recommended_actions')
     .insert(action)
@@ -529,6 +810,7 @@ export async function updateRecommendedAction(
   id: string,
   patch: Partial<RecommendedAction>,
 ): Promise<void> {
+  if (isLocalKnowledgeRuntime) return;
   const { error } = await supabase
     .from('recommended_actions')
     .update(patch)
@@ -541,6 +823,7 @@ export async function fetchGraphData(): Promise<{
   entities: Entity[];
   relationships: EntityRelationship[];
 }> {
+  if (isLocalKnowledgeRuntime) return getLocalGraph();
   const [e, r] = await Promise.all([
     supabase.from('entities').select('*'),
     supabase.from('entity_relationships').select('*'),
@@ -556,6 +839,15 @@ export async function fetchGraphData(): Promise<{
 export async function fetchAssetGraph(
   assetId: string,
 ): Promise<{ entities: Entity[]; relationships: EntityRelationship[] }> {
+  if (isLocalKnowledgeRuntime) {
+    const graph = getLocalGraph();
+    const asset = getLocalAssets().find((item) => item.id === assetId);
+    const anchor = graph.entities.find((entity) => entity.entity_type === 'Asset' && entity.normalized_name === asset?.asset_tag.toLowerCase());
+    if (!anchor) return { entities: [], relationships: [] };
+    const related = graph.relationships.filter((relationship) => relationship.source_entity_id === anchor.id || relationship.target_entity_id === anchor.id);
+    const ids = new Set([anchor.id, ...related.flatMap((relationship) => [relationship.source_entity_id, relationship.target_entity_id])]);
+    return { entities: graph.entities.filter((entity) => ids.has(entity.id)), relationships: related };
+  }
   const { data: asset } = await supabase
     .from('assets')
     .select('*')
@@ -608,6 +900,7 @@ export async function fetchEntityEvidence(entityId: string): Promise<Array<{
   sectionTitle: string | null;
   confidence: number | null;
 }>> {
+  if (isLocalKnowledgeRuntime) return localEntityEvidence(entityId).map((item) => ({ ...item, confidence: 1 }));
   const { data, error } = await supabase
     .from('entity_mentions')
     .select('confidence, document_chunks!inner(id, document_id, content, page_number, section_title, documents!inner(id, original_name))')
@@ -650,6 +943,7 @@ export async function fetchEntityEvidence(entityId: string): Promise<Array<{
 
 // ---------- Settings ----------
 export async function fetchSettings(): Promise<Record<string, unknown>> {
+  if (isLocalKnowledgeRuntime) return getLocalSettings();
   const { data, error } = await supabase.from('app_settings').select('*');
   if (error) throw error;
   const out: Record<string, unknown> = {};

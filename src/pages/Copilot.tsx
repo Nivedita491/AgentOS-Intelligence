@@ -265,7 +265,7 @@ export function Copilot() {
                   <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-4">
                     {m.fallback && (
                       <div className="flex items-center gap-1.5 rounded-md bg-amber-50 border border-amber-200 px-2.5 py-1.5 text-[11px] text-amber-700">
-                        <Info className="h-3.5 w-3.5" /> Evidence-only mode: Gemini generation was unavailable, so no unsupported synthesis was produced.
+                        <Info className="h-3.5 w-3.5" /> Local Knowledge mode: this response is generated from locally stored evidence, not a live AI provider.
                       </div>
                     )}
 
@@ -295,17 +295,17 @@ export function Copilot() {
                     {/* Hybrid Retrieval Info */}
                     {m.answer.retrieval && (
                       <div className="flex items-center gap-3 flex-wrap text-[11px] text-slate-500">
-                        <span className="font-medium">Hybrid Retrieval:</span>
-                        <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-blue-700">
-                          Vector: {m.answer.retrieval.vector.count}
-                        </span>
-                        {m.answer.retrieval.lexical && <span className="inline-flex items-center gap-1 rounded-full border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-cyan-700">Lexical: {m.answer.retrieval.lexical.count}</span>}
-                        <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-700">
-                          Metadata: {m.answer.retrieval.metadata.count}
-                        </span>
-                        <span className="inline-flex items-center gap-1 rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-purple-700">
-                          Knowledge Graph: {m.answer.retrieval.knowledgeGraph.count}
-                        </span>
+                        <span className="font-medium">{m.fallback ? 'Local Retrieval:' : 'Hybrid Retrieval:'}</span>
+                        {m.fallback ? <>
+                          <span className="inline-flex items-center gap-1 rounded-full border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-cyan-700">Text matches: {m.answer.retrieval.lexical?.count ?? 0}</span>
+                          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-700">Metadata: {m.answer.retrieval.metadata.count}</span>
+                          <span className="inline-flex items-center gap-1 rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-purple-700">Graph matches: {m.answer.retrieval.knowledgeGraph.count}</span>
+                        </> : <>
+                          <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-blue-700">Vector: {m.answer.retrieval.vector.count}</span>
+                          {m.answer.retrieval.lexical && <span className="inline-flex items-center gap-1 rounded-full border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-cyan-700">Lexical: {m.answer.retrieval.lexical.count}</span>}
+                          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-700">Metadata: {m.answer.retrieval.metadata.count}</span>
+                          <span className="inline-flex items-center gap-1 rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-purple-700">Knowledge Graph: {m.answer.retrieval.knowledgeGraph.count}</span>
+                        </>}
                       </div>
                     )}
 
@@ -389,6 +389,7 @@ export function Copilot() {
                               </div>
                               <p className="text-[10px] text-slate-400 mt-0.5">{s.section}{s.page ? ` · Page ${s.page}` : ''}</p>
                               {s.excerpt && <p className="text-[11px] text-slate-500 mt-1 line-clamp-2">{s.excerpt}</p>}
+                              {m.fallback && s.similarityScore != null && <p className="mt-1 text-[10px] text-slate-400">Relevance score: {s.similarityScore}%</p>}
                             </Link>
                           ))}
                         </div>
